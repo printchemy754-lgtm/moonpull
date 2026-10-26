@@ -1,0 +1,146 @@
+name: Build Android (APK + AAB)
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  GODOT_VERSION: "4.6.2"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
+      - name: Download Godot + export templates
+        run: |
+          set -e
+          V="${GODOT_VERSION}"
+          BASE="https://github.com/godotengine/godot/releases/download/${V}-stable"
+          wget -q "$BASE/Godot_v${V}-stable_linux.x86_64.zip"
+          unzip -q "Godot_v${V}-stable_linux.x86_64.zip"
+          mv "Godot_v${V}-stable_linux.x86_64" "$HOME/godot"
+          chmod +x "$HOME/godot"
+          wget -q "$BASE/Godot_v${V}-stable_export_templates.tpz"
+          mkdir -p /tmp/tpl "$HOME/.local/share/godot/export_templates/${V}.stable"
+          unzip -q "Godot_v${V}-stable_export_templates.tpz" -d /tmp/tpl
+          mv /tmp/tpl/templates/* "$HOME/.local/share/godot/export_templates/${V}.stable/"
+          rm -f ./*.zip ./*.tpz
+
+      - name: Install Android build template into the project
+        run: |
+          set -e
+          V="${GODOT_VERSION}"
+          SRC="$HOME/.local/share/godot/export_templates/${V}.stable/android_source.zip"
+          mkdir -p game/android/build
+          unzip -q -o "$SRC" -d game/android/build
+          echo "${V}.stable" > game/android/.build_version
+          touch game/android/build/.gdignore
+
+      - name: Build the GodotAds plugin (AAR)
+        env:
+          ADMOB_APP_ID: ${{ secrets.ADMOB_APP_ID }}
+        run: |
+          set -e
+          V="${GODOT_VERSION}"
+          mkdir -p android-plugin/godotads/libs /tmp/godotlib
+          AAR=$(find game/android/build -name 'godot-lib*release*.aar' | head -n1)
+          if [ -z "$AAR" ]; then
+            echo "godot-lib not in template, fetching from Maven Central"
+            wget -q -O /tmp/godotlib/godot.aar "https://repo1.maven.org/maven2/org/godotengine/godot/${V}.stable/godot-${V}.stable.aar"
+            AAR=/tmp/godotlib/godot.aar
+          fi
+          echo "Using $AAR"
+          unzip -q -o "$AAR" classes.jar -d /tmp/godotlib
+          cp /tmp/godotlib/classes.jar android-plugin/godotads/libs/godot-lib.jar
+          if [ -n "$ADMOB_APP_ID" ]; then
+            sed -i "s#ca-app-pub-3940256099942544~3347511713#${ADMOB_APP_ID}#" android-plugin/godotads/src/main/AndroidManifest.xml
+            echo "Using your AdMob App ID"
+          else
+            echo "::warning::ADMOB_APP_ID secret not set - building with Google's TEST AdMob app id."
+          fi
+          (cd android-plugin && gradle --no-daemon :godotads:assembleRelease)
+          mkdir -p game/addons/godot_ads/bin
+          cp android-plugin/godotads/build/outputs/aar/godotads-release.aar game/addons/godot_ads/bin/GodotAds-release.aar
+
+      - name: Configure signing + editor settings
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          set -e
+          V="${GODOT_VERSION}"
+          MM="${V%.*}"   # e.g. 4.6
+          keytool -genkeypair -v -keystore "$HOME/debug.keystore" -alias androiddebugkey \
+            -storepass android -keypass android -keyalg RSA -keysize 2048 -validity 9999 \
+            -dname "CN=Android Debug,O=Android,C=US" >/dev/null 2>&1
+          SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          mkdir -p "$HOME/.config/godot"
+          for f in "editor_settings-${MM}.tres" "editor_settings-4.tres"; do
+            cat > "$HOME/.config/godot/$f" <<EOF
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/android_sdk_path = "$SDK"
+          export/android/java_sdk_path = "$JAVA_HOME"
+          export/android/debug_keystore = "$HOME/debug.keystore"
+          export/android/debug_keystore_user = "androiddebugkey"
+          export/android/debug_keystore_pass = "android"
+          EOF
+            sed -i 's/^          //' "$HOME/.config/godot/$f"
+          done
+
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$HOME/release.keystore"
+            ALIAS="${KEY_ALIAS:-upload}"
+            PASS="$KEYSTORE_PASSWORD"
+          else
+            echo "::warning::KEYSTORE_BASE64 secret not set - signing with a THROWAWAY key. Fine for testing the APK, NOT for Google Play (see README)."
+            ALIAS=upload
+            PASS=throwaway-pass
+            keytool -genkeypair -v -keystore "$HOME/release.keystore" -alias "$ALIAS" \
+              -storepass "$PASS" -keypass "$PASS" -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Moonpull" >/dev/null 2>&1
+          fi
+          echo "GODOT_ANDROID_KEYSTORE_RELEASE_PATH=$HOME/release.keystore" >> "$GITHUB_ENV"
+          echo "GODOT_ANDROID_KEYSTORE_RELEASE_USER=$ALIAS" >> "$GITHUB_ENV"
+          echo "::add-mask::$PASS"
+          echo "GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD=$PASS" >> "$GITHUB_ENV"
+
+          # Every CI run gets a higher versionCode (Google Play requires it).
+          sed -i "s/^version\/code=.*/version\/code=${GITHUB_RUN_NUMBER}/" game/export_presets.cfg
+
+      - name: Import project
+        run: |
+          "$HOME/godot" --headless --path game --import || "$HOME/godot" --headless --path game --editor --quit || true
+
+      - name: Export APK and AAB
+        run: |
+          set -e
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          "$HOME/godot" --headless --path game --export-release "Android APK" "$GITHUB_WORKSPACE/out/moonpull.apk"
+          "$HOME/godot" --headless --path game --export-release "Android AAB" "$GITHUB_WORKSPACE/out/moonpull.aab"
+          ls -la "$GITHUB_WORKSPACE/out"
+          test -s "$GITHUB_WORKSPACE/out/moonpull.apk" || { echo "::error::APK was not produced"; exit 1; }
+          test -s "$GITHUB_WORKSPACE/out/moonpull.aab" || { echo "::error::AAB was not produced"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: moonpull-android-${{ github.run_number }}
+          path: |
+            out/moonpull.apk
+            out/moonpull.aab
+          if-no-files-found: error

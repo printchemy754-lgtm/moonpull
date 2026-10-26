@@ -1,0 +1,25 @@
+plugins {
+    id 'com.android.library' version '8.7.3'
+}
+
+android {
+    namespace 'com.dwarf.godotads'
+    compileSdk 35
+
+    defaultConfig {
+        minSdk 24
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    // Godot engine classes: extracted by CI from the export templates (not committed).
+    compileOnly files('libs/godot-lib.jar')
+    // Supplied at export time by addons/godot_ads/godot_ads_plugin.gd.
+    compileOnly 'com.google.android.gms:play-services-ads:23.6.0'
+    compileOnly 'com.google.android.ump:user-messaging-platform:3.1.0'
+}

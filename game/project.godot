@@ -1,0 +1,42 @@
+; Engine configuration file.
+; Moonpull — you don't steer the boat, you steer the sea.
+
+config_version=5
+
+[application]
+
+config/name="Moonpull"
+config/description="Hold to pull the tide. Raise the sea over reefs, drop it under bridges."
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.6", "GL Compatibility")
+config/icon="res://icon.svg"
+
+[autoload]
+
+Save="*res://scripts/save.gd"
+Ads="*res://scripts/ads.gd"
+Sfx="*res://scripts/sfx.gd"
+
+[display]
+
+window/size/viewport_width=720
+window/size/viewport_height=1280
+window/size/window_width_override=405
+window/size/window_height_override=720
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+window/handheld/orientation=1
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/godot_ads/plugin.cfg")
+
+[input_devices]
+
+pointing/emulate_mouse_from_touch=true
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+anti_aliasing/quality/msaa_3d=1

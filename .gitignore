@@ -1,0 +1,17 @@
+# Godot
+game/.godot/
+game/android/
+game/addons/godot_ads/bin/
+out/
+
+# Android plugin build
+android-plugin/.gradle/
+android-plugin/build/
+android-plugin/godotads/build/
+android-plugin/godotads/libs/
+android-plugin/local.properties
+
+# Secrets — never commit
+*.keystore
+*.jks
+*.b64
