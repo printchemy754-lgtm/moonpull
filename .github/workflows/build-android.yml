@@ -1,4 +1,4 @@
-name: Build Android (APK + AAB)
+name: Build (APK + AAB + Web)
 
 on:
   push:
@@ -8,14 +8,17 @@ on:
 env:
   GODOT_VERSION: "4.6.2"
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -48,6 +51,23 @@ jobs:
           unzip -q -o "$SRC" -d game/android/build
           echo "${V}.stable" > game/android/.build_version
           touch game/android/build/.gdignore
+          # Google Play needs targetSdk 36 (from 31 Aug 2026). Godot 4.6 refuses 36 in the
+          # export preset, so the preset keeps the default and we raise it here instead.
+          SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          if [ ! -d "$SDK/platforms/android-36" ]; then
+            yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" >/dev/null
+          fi
+          cat >> game/android/build/build.gradle <<'EOF'
+
+          // --- Moonpull: target Android 16 (API 36) for Google Play ---
+          android {
+              compileSdk 36
+              defaultConfig {
+                  targetSdk 36
+              }
+          }
+          EOF
+          tail -n 8 game/android/build/build.gradle
 
       - name: Build the GodotAds plugin (AAR)
         env:
@@ -144,3 +164,49 @@ jobs:
             out/moonpull.apk
             out/moonpull.aab
           if-no-files-found: error
+
+  # Browser version of the game -> GitHub Pages (play-test on any phone/PC, no install).
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download Godot + export templates
+        run: |
+          set -e
+          V="${GODOT_VERSION}"
+          BASE="https://github.com/godotengine/godot/releases/download/${V}-stable"
+          wget -q "$BASE/Godot_v${V}-stable_linux.x86_64.zip"
+          unzip -q "Godot_v${V}-stable_linux.x86_64.zip"
+          mv "Godot_v${V}-stable_linux.x86_64" "$HOME/godot"
+          chmod +x "$HOME/godot"
+          wget -q "$BASE/Godot_v${V}-stable_export_templates.tpz"
+          mkdir -p /tmp/tpl "$HOME/.local/share/godot/export_templates/${V}.stable"
+          unzip -q "Godot_v${V}-stable_export_templates.tpz" -d /tmp/tpl
+          mv /tmp/tpl/templates/* "$HOME/.local/share/godot/export_templates/${V}.stable/"
+
+      - name: Export Web build
+        run: |
+          set -e
+          "$HOME/godot" --headless --path game --import || "$HOME/godot" --headless --path game --editor --quit || true
+          mkdir -p "$GITHUB_WORKSPACE/out/web"
+          "$HOME/godot" --headless --path game --export-release "Web" "$GITHUB_WORKSPACE/out/web/index.html"
+          test -s "$GITHUB_WORKSPACE/out/web/index.html" || { echo "::error::Web build was not produced"; exit 1; }
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: out/web
+
+  deploy-web:
+    needs: web
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

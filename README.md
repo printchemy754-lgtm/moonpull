@@ -25,32 +25,53 @@
 **Сейчас стоят тестовые ID Google.** Перед публикацией нужно:
 1. Создать приложение и 3 рекламных блока в [AdMob](https://admob.google.com).
 2. Вставить ID блоков в `game/scripts/ads.gd` (константы `BANNER_ID`, `INTERSTITIAL_ID`, `REWARDED_ID`).
-3. Добавить секрет `ADMOB_APP_ID` (вида `ca-app-pub-XXXX~YYYY`) в GitHub. CI сам подставит его в манифест.
+3. Добавить секрет `ADMOB_APP_ID` (вида `ca-app-pub-XXXX~YYYY`) в *Settings → Secrets and variables → Actions*. CI сам подставит его в манифест.
 4. В AdMob → Privacy & messaging создать сообщение GDPR. Иначе форма согласия не появится.
 
-## Как получить APK и AAB
+## Всё через браузер — ничего не устанавливаем
 
-1. Создай репозиторий на GitHub и залей туда **всю папку** (`.github`, `game`, `android-plugin`, `tools`).
-2. Открой вкладку **Actions** и дождись, пока пройдёт «Build Android (APK + AAB)». Сборка запускается сама при каждом пуше в `main`, а также вручную кнопкой *Run workflow*.
-3. Внизу страницы прогона в разделе **Artifacts** будет `moonpull-android-N.zip`, внутри `moonpull.apk` и `moonpull.aab`.
+Нужен только аккаунт GitHub. Сборка идёт на серверах GitHub. Код можно править и запускать команды в **Codespaces** — это VS Code с терминалом прямо в браузере (бесплатно до 120 часов в месяц).
 
-APK можно сразу ставить на телефон. AAB нужен для Google Play.
+### 1. Создать репозиторий и залить проект
+1. На github.com: **New repository** → имя `moonpull` → **Private** → поставь галочку *Add a README file* → **Create**.
+2. В репозитории: зелёная кнопка **Code** → вкладка **Codespaces** → **Create codespace on main**. Откроется редактор в браузере.
+3. Перетащи `moonpull.zip` в панель файлов слева, затем в терминале снизу выполни:
+   ```bash
+   unzip -o moonpull.zip && cp -r moonpull/. . && rm -rf moonpull moonpull.zip
+   git add -A && git commit -m "Moonpull" && git push
+   ```
+   Codespaces заливает и скрытую папку `.github` со сборкой. Обычная загрузка файлов через сайт её иногда теряет, поэтому лучше так.
 
-### Ключ подписи для Google Play (сделать один раз)
+### 2. Включить браузерную версию (один раз)
+**Settings → Pages → Source: GitHub Actions.**
 
-Без секретов CI подписывает сборку **одноразовым** ключом. Для тестов APK это нормально, но в Google Play такой AAB загружать нельзя: следующую версию нечем будет подписать.
+### 3. Получить APK, AAB и ссылку на игру
+Вкладка **Actions** → прогон «Build (APK + AAB + Web)». Сборка запускается при каждом `git push`, а также вручную кнопкой *Run workflow*.
+- **Artifacts** внизу страницы прогона: `moonpull-android-N.zip`, внутри `moonpull.apk` и `moonpull.aab`.
+- **deploy-web** показывает ссылку вида `https://<ник>.github.io/moonpull/`. Это игра в браузере: открой её на телефоне и тестируй. Реклама там симулируется.
 
+APK можно скачать прямо на Android-телефон (зайди на GitHub через браузер телефона), распаковать и установить.
+
+> С приватным репозиторием GitHub Pages доступен только на платном плане. На бесплатном аккаунте для браузерной версии сделай репозиторий публичным (*Settings → General → Danger Zone → Change visibility*) или просто пропусти шаг 2: APK и AAB собираются в любом случае.
+
+### 4. Ключ подписи для Google Play (один раз, в Codespaces)
+Без ключа CI подписывает сборку **одноразовым** ключом. Для тестов APK это нормально, но для Google Play не годится.
 ```bash
 bash tools/make_keystore.sh
 ```
+1. Открой `upload.keystore.b64` в редакторе и скопируй весь текст.
+2. Добавь в *Settings → Secrets and variables → Actions → New repository secret*:
+   - `KEYSTORE_BASE64` — скопированный текст;
+   - `KEYSTORE_PASSWORD` — пароль, который ты ввёл;
+   - `KEY_ALIAS` — `upload`.
+3. Правой кнопкой по `upload.keystore` → **Download** и сохрани в надёжное место (например, в облако). В git он не попадёт, он в `.gitignore`.
+4. Удали оба файла из Codespace.
 
-Скрипт создаст `upload.keystore` и подскажет, какие секреты добавить в *Settings → Secrets and variables → Actions*: `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`. Сам `upload.keystore` храни в надёжном месте и **не коммить** (он уже в `.gitignore`).
+`versionCode` увеличивается сам, он равен номеру прогона CI.
 
-`versionCode` увеличивается автоматически, он равен номеру прогона CI.
-
-## Поиграть на компьютере
-
-Открой папку `game/` в Godot 4.6 и нажми F5. Пробел или зажатая мышь заменяют касание, реклама симулируется.
+### Правки кода
+- **Codespaces**: правишь файлы → в терминале `git add -A && git commit -m "..." && git push` → через ~10 минут новая сборка.
+- **Мелочи** (например, ID рекламы в `game/scripts/ads.gd`): открой файл на github.com → значок карандаша → **Commit changes**. Сборка запустится сама.
 
 ## Структура
 
@@ -62,7 +83,7 @@ game/                       проект Godot
   scripts/save.gd, sfx.gd   сохранения, процедурные звуки
   addons/godot_ads/         подключает рекламный плагин при экспорте
 android-plugin/             Java-плагин AdMob (CI собирает его в .aar)
-.github/workflows/          сборка APK + AAB
+.github/workflows/          сборка APK + AAB + веб-версия
 ```
 
 ## Важно знать
