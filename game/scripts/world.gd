@@ -13,6 +13,7 @@ var water: MeshInstance3D
 var water_mat: ShaderMaterial
 var moon: MeshInstance3D
 var moon_mat: StandardMaterial3D
+var moon_ring_mat: StandardMaterial3D
 var level_root: Node3D
 var splash: CPUParticles3D
 var confetti: CPUParticles3D
@@ -62,7 +63,12 @@ func _ready() -> void:
 
 # ================================================================== building
 
-func build_level(data: Dictionary, level: int) -> void:
+var walls: Walls
+var _wall_len := 100.0
+var _wall_seed := 1
+
+
+func build_level(data: Dictionary, level: int, wall_left := "canyon", wall_right := "harbor") -> void:
 	for c in level_root.get_children():
 		c.queue_free()
 	ambient = null
@@ -72,18 +78,83 @@ func build_level(data: Dictionary, level: int) -> void:
 	theme = Themes.for_level(level)
 	_apply_theme()
 	rng.seed = level * 31 + 7
+	# Items and coins are only data here; their 3D nodes stream in as the boat
+	# approaches (see _stream), so even the endless river stays light on phones.
 	items = []
 	for it in data.items:
-		var e: Dictionary = it.duplicate()
-		items.append(e)
-		_spawn_item(e)
+		items.append((it as Dictionary).duplicate())
 	pearls = []
-	for pos in data.pearls:
-		_spawn_pearl(pos)
+	var ps: Array = data.pearls.duplicate()
+	ps.sort_custom(func(a: Vector3, b: Vector3): return a.z < b.z)
+	for pos in ps:
+		var v: Vector3 = pos
+		pearls.append({"y": v.y, "z": v.z, "taken": false})
+	_next_item = 0
+	_next_pearl = 0
 	finish_z = data.finish
-	_spawn_finish(finish_z)
-	_spawn_canyon(finish_z + 90.0)
+	endless = bool(data.get("endless", false))
+	if not endless:
+		_spawn_finish(finish_z)
+	_wall_len = finish_z + 90.0
+	_wall_seed = level
+	_spawn_floor(_wall_len)
+	set_walls(wall_left, wall_right)
 	_spawn_ambient()
+
+
+func set_walls(left: String, right: String) -> void:
+	if walls == null:
+		walls = Walls.new()
+		add_child(walls)
+	walls.build(left, right, _wall_len, theme, _wall_seed)
+	walls.ensure(_last_boat_z + SPAWN_AHEAD + 100.0)
+
+
+const SPAWN_AHEAD := 170.0
+const DESPAWN_BEHIND := 45.0
+var endless := false
+var _next_item := 0
+var _next_pearl := 0
+var _last_boat_z := 0.0
+
+
+## Creates nodes for things coming into view and frees things far behind.
+func _stream(boat_z: float) -> void:
+	_last_boat_z = boat_z
+	var ahead := boat_z + SPAWN_AHEAD
+	while _next_item < items.size() and float(items[_next_item].z) < ahead:
+		_spawn_item(items[_next_item])
+		_next_item += 1
+	while _next_pearl < pearls.size() and float(pearls[_next_pearl].z) < ahead:
+		var p: Dictionary = pearls[_next_pearl]
+		if not p.taken:
+			var mi := _mi(level_root, _coin_mesh, _coin_mat, Vector3(0.0, p.y, p.z))
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			p["node"] = mi
+		_next_pearl += 1
+	var behind := boat_z - DESPAWN_BEHIND
+	for i in mini(_next_item, items.size()):
+		var e: Dictionary = items[i]
+		if float(e.z) > behind:
+			break
+		if e.has("node") and not e.get("gone", false):
+			(e.node as Node3D).queue_free()
+			e["gone"] = true
+	for i in mini(_next_pearl, pearls.size()):
+		var p2: Dictionary = pearls[i]
+		if float(p2.z) > behind:
+			break
+		if p2.has("node") and not p2.get("gone", false):
+			(p2.node as Node3D).queue_free()
+			p2["gone"] = true
+	if walls:
+		walls.ensure(boat_z + SPAWN_AHEAD + 100.0)
+		walls.cull(boat_z - 80.0)
+
+
+func _spawn_floor(length: float) -> void:
+	_box(level_root, Vector3(LevelGen.RIVER_W + 4.0, 1.0, length + 60.0),
+		Vector3(0.0, LevelGen.FLOOR_Y - 0.5, (length - 40.0) * 0.5 - 10.0), _mat("floor", theme.floor, 1.0, 0.0, 0.0))
 
 
 ## Toon material with an ink outline (outline 0 for huge surfaces like walls).
@@ -193,6 +264,9 @@ func _apply_theme() -> void:
 	sun.rotation_degrees = theme.sun_rot
 	water_mat.set_shader_parameter("deep_color", theme.water_deep)
 	water_mat.set_shader_parameter("shallow_color", theme.water_shallow)
+	water_mat.set_shader_parameter("grid_color", theme.get("grid", Color("00e5ff")))
+	water_mat.set_shader_parameter("edge_color", theme.get("neon", Color("ff2fd0")))
+	moon_ring_mat.albedo_color = Color(theme.get("neon2", Color.WHITE), 0.6)
 	moon_mat.albedo_color = theme.moon
 	moon_mat.emission = theme.moon
 
@@ -226,6 +300,24 @@ func _build_moon() -> void:
 	moon.material_override = moon_mat
 	moon.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(moon)
+	# planetary ring: the "Moonpull" moon in a sci-fi sky
+	var ring := TorusMesh.new()
+	ring.inner_radius = 5.4
+	ring.outer_radius = 6.6
+	ring.rings = 48
+	ring.ring_segments = 4
+	moon_ring_mat = StandardMaterial3D.new()
+	moon_ring_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	moon_ring_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	moon_ring_mat.albedo_color = Color(0.0, 0.9, 1.0, 0.6)
+	moon_ring_mat.set("disable_fog", true)
+	var rmi := MeshInstance3D.new()
+	rmi.mesh = ring
+	rmi.material_override = moon_ring_mat
+	rmi.rotation = Vector3(1.2, 0.0, 0.35)
+	rmi.scale = Vector3(1.0, 0.12, 1.0)
+	rmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	moon.add_child(rmi)
 	# a few craters
 	var crater := StandardMaterial3D.new()
 	crater.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
@@ -322,79 +414,80 @@ func _foam(root: Node3D) -> MeshInstance3D:
 	return mi
 
 
+## Energy fence: hex pylons whose tops (and the laser between them) sit exactly at h.
 func _build_reef(root: Node3D, h: float, extra_depth := 0.0) -> void:
-	var rock := _mat("rock", theme.rock, 0.95)
-	var tip := _mat("rock_tip", theme.rock_tip, 0.9, theme.tip_glow)
+	var metal := _mat("pylon", theme.rock, 0.6)
+	var glow := _mat("pylon_tip", theme.rock_tip, 0.3, theme.tip_glow, 0.025)
 	var bottom := LevelGen.FLOOR_Y - extra_depth
-	var base_top := maxf(h * 0.55, 0.25)
+	var base_top := maxf(h * 0.4, 0.25)
 	var base_h := base_top - bottom
-	_box(root, Vector3(LevelGen.RIVER_W + 0.4, base_h, 1.2), Vector3(0.0, bottom + base_h * 0.5, 0.0), rock)
-	var spikes := 6
-	var icy: bool = theme.deco == "ice"
-	for i in spikes:
-		var x := lerpf(-LevelGen.RIVER_W * 0.5 + 0.6, LevelGen.RIVER_W * 0.5 - 0.6, float(i) / (spikes - 1))
-		var top := h if i % 2 == 0 else h * rng.randf_range(0.8, 0.96)  # tallest spikes are exactly h
+	_box(root, Vector3(LevelGen.RIVER_W + 0.4, base_h, 1.0), Vector3(0.0, bottom + base_h * 0.5, 0.0), metal)
+	_box(root, Vector3(LevelGen.RIVER_W + 0.4, 0.08, 1.04), Vector3(0.0, base_top - 0.06, 0.0), glow)
+	var n := 5
+	for i in n:
+		var x := lerpf(-LevelGen.RIVER_W * 0.5 + 0.5, LevelGen.RIVER_W * 0.5 - 0.5, float(i) / (n - 1))
+		var top := h - 0.24   # glowing cap ends exactly at h
 		var height := top - bottom
-		var spike := _cone(root, rng.randf_range(0.6, 0.85), 0.04 if icy else 0.09, height,
-			Vector3(x, bottom + height * 0.5, rng.randf_range(-0.2, 0.2)),
-			tip if i % 2 == 0 else rock, 4 if icy else 6)
-		spike.rotation.y = rng.randf() * TAU
-	# small rubble for detail
-	for i in 3:
-		_ball(root, rng.randf_range(0.25, 0.45), Vector3(rng.randf_range(-3.5, 3.5), base_top, rng.randf_range(-0.6, 0.6)), rock, Vector3(1.0, 0.6, 1.0))
+		_cone(root, 0.36, 0.3, height, Vector3(x, bottom + height * 0.5, 0.0), metal, 6)
+		_cone(root, 0.32, 0.12, 0.24, Vector3(x, top + 0.12, 0.0), glow, 6)
+		_box(root, Vector3(0.05, height * 0.6, 0.05), Vector3(x, bottom + height * 0.6, 0.31), glow)
+	# the laser: exact danger height
+	var beam := _box(root, Vector3(LevelGen.RIVER_W - 0.6, 0.07, 0.07), Vector3(0.0, h - 0.035, 0.0), _mat("laser", theme.rock_tip, 0.2, 4.0, 0.0))
+	beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 
+## Hard-light gantry. The glowing strip on its underside marks the clearance.
 func _build_bridge(root: Node3D, b: float) -> void:
-	var wood := _mat("wood", theme.wood, 0.85)
-	var dark := _mat("wood_dark", theme.wood_dark, 0.9)
-	var lamp := _mat("lamp", theme.lamp, 0.5, 2.4)
+	var metal := _mat("gantry", theme.wood, 0.5)
+	var dark := _mat("gantry_dark", theme.wood_dark, 0.6)
+	var lamp := _mat("lamp", theme.lamp, 0.3, 2.6, 0.02)
 	var span := LevelGen.RIVER_W + 2.6
 	for s in [-1.0, 1.0]:
 		var ph := b - LevelGen.FLOOR_Y
-		_box(root, Vector3(0.8, ph, 0.9), Vector3(s * (LevelGen.RIVER_W * 0.5 + 0.5), LevelGen.FLOOR_Y + ph * 0.5, 0.0), dark)
-	_deck(root, b, span, wood, dark, lamp)
-	if theme.deco == "palm":
-		var vine := _mat("vine", Color("3f8f3f"), 0.9)
-		for k in 4:
-			var vx := rng.randf_range(-3.2, 3.2)
-			var vl := rng.randf_range(0.2, 0.45)
-			_box(root, Vector3(0.06, vl, 0.06), Vector3(vx, b - vl * 0.5, rng.randf_range(-0.5, 0.5)), vine)
+		var px: float = s * (LevelGen.RIVER_W * 0.5 + 0.5)
+		_box(root, Vector3(0.8, ph, 0.9), Vector3(px, LevelGen.FLOOR_Y + ph * 0.5, 0.0), dark)
+		_box(root, Vector3(0.06, ph * 0.9, 0.06), Vector3(px - s * 0.42, LevelGen.FLOOR_Y + ph * 0.5, 0.46), lamp)
+	_deck(root, b, span, metal, dark, lamp)
 
 
 ## A bridge deck whose underside sits at local height `y`.
-func _deck(root: Node3D, y: float, span: float, wood: Material, dark: Material, lamp: Material) -> void:
-	_box(root, Vector3(span, 0.5, 1.4), Vector3(0.0, y + 0.25, 0.0), wood)
-	_box(root, Vector3(span, 0.1, 1.5), Vector3(0.0, y + 0.05, 0.0), dark)
-	for rz in [-0.62, 0.62]:
-		_box(root, Vector3(span, 0.1, 0.1), Vector3(0.0, y + 0.95, rz), wood)
-		for k in 7:
-			_box(root, Vector3(0.1, 0.45, 0.1), Vector3(lerpf(-span * 0.5 + 0.3, span * 0.5 - 0.3, k / 6.0), y + 0.72, rz), dark)
-	for s in [-1.0, 1.0]:
-		_box(root, Vector3(0.25, 0.35, 0.25), Vector3(s * (LevelGen.RIVER_W * 0.5 - 0.3), y + 0.75, 0.0), lamp)
+func _deck(root: Node3D, y: float, span: float, metal: Material, dark: Material, lamp: Material) -> void:
+	_box(root, Vector3(span, 0.45, 1.4), Vector3(0.0, y + 0.22, 0.0), metal)
+	_box(root, Vector3(span - 0.4, 0.18, 1.0), Vector3(0.0, y + 0.53, 0.0), dark)
+	var under := _box(root, Vector3(span - 0.2, 0.06, 1.2), Vector3(0.0, y + 0.03, 0.0), _mat("under_glow", theme.get("neon", theme.lamp), 0.2, 3.0, 0.0))
+	under.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	for rz in [-0.66, 0.66]:
+		_box(root, Vector3(span, 0.06, 0.06), Vector3(0.0, y + 0.5, rz), lamp)
+	for k in 5:
+		var x := lerpf(-span * 0.5 + 0.8, span * 0.5 - 0.8, k / 4.0)
+		_box(root, Vector3(0.5, 0.12, 0.08), Vector3(x, y + 0.25, 0.72), _mat("chevron", theme.get("neon2", Color.WHITE), 0.2, 2.0, 0.0), Vector3(0.0, 0.0, 0.5))
 
 
 func _build_drawbridge(root: Node3D, e: Dictionary) -> void:
-	var wood := _mat("wood", theme.wood, 0.85)
-	var dark := _mat("wood_dark", theme.wood_dark, 0.9)
-	var lamp := _mat("lamp", theme.lamp, 0.5, 2.4)
-	var stone := _mat("tower", theme.rock.lightened(0.25), 0.9)
+	var metal := _mat("gantry", theme.wood, 0.5)
+	var dark := _mat("gantry_dark", theme.wood_dark, 0.6)
+	var lamp := _mat("lamp", theme.lamp, 0.3, 2.6, 0.02)
+	var tower := _mat("tower", theme.metal if theme.has("metal") else theme.rock, 0.5)
+	var neon := _mat("neon_strip", theme.get("neon", theme.lamp), 0.2, 3.0, 0.0)
 	var top: float = e.b + 2.2
 	for s in [-1.0, 1.0]:
 		var th := top - LevelGen.FLOOR_Y
-		_box(root, Vector3(1.2, th, 1.6), Vector3(s * (LevelGen.RIVER_W * 0.5 + 0.8), LevelGen.FLOOR_Y + th * 0.5, 0.0), stone)
-		_cone(root, 0.95, 0.0, 1.2, Vector3(s * (LevelGen.RIVER_W * 0.5 + 0.8), top + 0.6, 0.0), _mat("roof", Color("c0392b"), 0.8), 4)
-		_box(root, Vector3(0.3, 0.3, 0.3), Vector3(s * (LevelGen.RIVER_W * 0.5 + 0.2), top - 0.4, 0.0), lamp)
+		var tx: float = s * (LevelGen.RIVER_W * 0.5 + 0.8)
+		_box(root, Vector3(1.2, th, 1.6), Vector3(tx, LevelGen.FLOOR_Y + th * 0.5, 0.0), tower)
+		for zz in [-0.82, 0.82]:
+			_box(root, Vector3(0.08, th * 0.92, 0.04), Vector3(tx - s * 0.5, LevelGen.FLOOR_Y + th * 0.5, zz), neon)
+		_cone(root, 0.5, 0.25, 0.5, Vector3(tx, top + 0.25, 0.0), dark, 8)
+		_ball(root, 0.22, Vector3(tx, top + 0.65, 0.0), lamp)
 	var mover := Node3D.new()
 	root.add_child(mover)
-	_deck(mover, 0.0, LevelGen.RIVER_W - 0.2, wood, dark, lamp)
-	# warning stripes under the deck
+	_deck(mover, 0.0, LevelGen.RIVER_W - 0.2, metal, dark, lamp)
 	for k in 8:
-		var col := Color("ffd23f") if k % 2 == 0 else Color("1e1b2e")
-		_box(mover, Vector3(0.95, 0.06, 1.42), Vector3(lerpf(-3.4, 3.4, k / 7.0), -0.01, 0.0), _mat("stripe%d" % (k % 2), col, 0.7))
+		var col: Color = theme.get("neon2", Color("ffd23f")) if k % 2 == 0 else Color("10101c")
+		_box(mover, Vector3(0.95, 0.04, 1.3), Vector3(lerpf(-3.4, 3.4, k / 7.0), -0.01, 0.0), _mat("stripe%d" % (k % 2), col, 0.5, 1.5 if k % 2 == 0 else 0.0, 0.0))
 	e["mover"] = mover
 	var chains: Array[MeshInstance3D] = []
 	for s in [-1.0, 1.0]:
-		var c := _box(root, Vector3(0.08, 1.0, 0.08), Vector3(s * (LevelGen.RIVER_W * 0.5 - 0.4), 0.0, 0.0), _mat("chain", Color("2a2a33"), 0.4))
+		var c := _box(root, Vector3(0.07, 1.0, 0.07), Vector3(s * (LevelGen.RIVER_W * 0.5 - 0.4), 0.0, 0.0), neon)
 		chains.append(c)
 	e["chains"] = chains
 	e["chain_top"] = top - 0.3
@@ -466,114 +559,52 @@ func _make_coin_mesh() -> ArrayMesh:
 	return st.commit()
 
 
-func _spawn_pearl(pos: Vector3) -> void:
-	var mi := _mi(level_root, _coin_mesh, _coin_mat, pos)
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	pearls.append({"node": mi, "y": pos.y, "z": pos.z, "taken": false})
-
-
+## Warp gate: a neon arch over the river + a floating holo-crate.
 func _spawn_finish(z: float) -> void:
 	var root := Node3D.new()
 	root.position = Vector3(0.0, 0.0, z)
 	level_root.add_child(root)
-	var red := _mat("lh_red", Color("e2463f"), 0.7)
-	var white := _mat("lh_white", Color("f6f2ea"), 0.7)
-	var light := _mat("lh_light", Color("fff1b0"), 0.3, 4.0)
+	var neon := _mat("gate_neon", theme.get("neon", Color("ff2fd0")), 0.2, 3.2, 0.03)
+	var neon2 := _mat("gate_neon2", theme.get("neon2", Color("00e5ff")), 0.2, 3.2, 0.03)
+	var metal := _mat("gate_metal", theme.get("metal", Color("3a3f6a")), 0.5)
+	var r := LevelGen.RIVER_W * 0.5 + 0.9
+	var base_y := 0.2
+	var segs := 14
+	for k in segs:
+		var a0 := PI * k / segs
+		var a1 := PI * (k + 1) / segs
+		var p0 := Vector3(cos(a0) * r, base_y + sin(a0) * r * 1.5, 0.0)
+		var p1 := Vector3(cos(a1) * r, base_y + sin(a1) * r * 1.5, 0.0)
+		var mid := (p0 + p1) * 0.5
+		var length := p0.distance_to(p1)
+		var ang := atan2(p1.y - p0.y, p1.x - p0.x)
+		_box(root, Vector3(length + 0.05, 0.55, 0.9), mid, metal, Vector3(0.0, 0.0, ang))
+		_box(root, Vector3(length + 0.05, 0.14, 1.0), mid + Vector3(0.0, 0.0, 0.0), neon if k % 2 == 0 else neon2, Vector3(0.0, 0.0, ang))
 	for s in [-1.0, 1.0]:
-		var x: float = s * (LevelGen.RIVER_W * 0.5 + 0.2)
-		for k in 7:
-			_cone(root, 0.75 - k * 0.04, 0.71 - k * 0.04, 1.4, Vector3(x, LevelGen.FLOOR_Y + 0.7 + k * 1.4, 0.0), red if k % 2 == 0 else white, 10)
-		_cone(root, 0.5, 0.5, 0.8, Vector3(x, LevelGen.FLOOR_Y + 10.2, 0.0), light, 10)
-		_cone(root, 0.6, 0.0, 0.7, Vector3(x, LevelGen.FLOOR_Y + 10.95, 0.0), red, 10)
-	for k in 10:
-		var bx := lerpf(-LevelGen.RIVER_W * 0.5 + 0.9, LevelGen.RIVER_W * 0.5 - 0.9, k / 9.0)
-		_box(root, Vector3(0.62, 0.6, 0.1), Vector3(bx, 8.2, 0.0), white if k % 2 == 0 else _mat("ink", Color("1e1b2e"), 0.8))
-	# treasure raft (floats on the tide, opens when you win)
+		_box(root, Vector3(1.1, 1.0 - LevelGen.FLOOR_Y, 1.4), Vector3(s * r, (1.0 + LevelGen.FLOOR_Y) * 0.5 - 0.2, 0.0), metal)
+	# holo-crate reward (opens when you win)
 	raft = Node3D.new()
 	raft.position = Vector3(-2.4, 0.0, z + 9.0)
 	level_root.add_child(raft)
-	var wood := _mat("raftwood", Color("8b5a3c"), 0.9)
-	for k in 4:
-		_cone(raft, 0.22, 0.22, 2.2, Vector3(-0.66 + k * 0.44, 0.05, 0.0), wood, 8, Vector3(PI * 0.5, 0.0, 0.0))
-	var gold := _mat("gold", Color("ffc531"), 0.3, 0.6)
-	_box(raft, Vector3(0.9, 0.5, 0.65), Vector3(0.0, 0.5, 0.0), _mat("chest", Color("8b4a25"), 0.8))
-	_box(raft, Vector3(0.95, 0.08, 0.7), Vector3(0.0, 0.5, 0.0), gold)
+	var pad := CylinderMesh.new()
+	pad.top_radius = 1.0
+	pad.bottom_radius = 1.1
+	pad.height = 0.2
+	pad.radial_segments = 6
+	_mi(raft, pad, metal, Vector3(0.0, 0.05, 0.0))
+	_box(raft, Vector3(2.1, 0.05, 0.05), Vector3(0.0, 0.17, 0.0), neon2, Vector3(0.0, 0.5, 0.0))
+	var crate := _mat("crate", Color("2a2f5a"), 0.5)
+	var gold := _mat("gold", Color("ffc531"), 0.3, 1.2, 0.02)
+	_box(raft, Vector3(0.9, 0.5, 0.65), Vector3(0.0, 0.45, 0.0), crate)
+	_box(raft, Vector3(0.95, 0.06, 0.7), Vector3(0.0, 0.45, 0.0), gold)
 	chest_lid = Node3D.new()
-	chest_lid.position = Vector3(0.0, 0.75, -0.32)
+	chest_lid.position = Vector3(0.0, 0.7, -0.32)
 	raft.add_child(chest_lid)
-	_box(chest_lid, Vector3(0.9, 0.22, 0.65), Vector3(0.0, 0.11, 0.32), _mat("chest", Color("8b4a25"), 0.8))
-	_box(chest_lid, Vector3(0.95, 0.06, 0.7), Vector3(0.0, 0.2, 0.32), gold)
+	_box(chest_lid, Vector3(0.9, 0.2, 0.65), Vector3(0.0, 0.1, 0.32), crate)
+	_box(chest_lid, Vector3(0.95, 0.05, 0.7), Vector3(0.0, 0.18, 0.32), gold)
 
 
 # ------------------------------------------------------------------ canyon & decoration
-
-func _spawn_canyon(length: float) -> void:
-	var cols: Array = theme.walls
-	var z := -40.0
-	while z < length:
-		var seg := rng.randf_range(6.0, 11.0)
-		for s in [-1.0, 1.0]:
-			var top := rng.randf_range(7.2, 9.4)
-			var hgt := top - LevelGen.FLOOR_Y + 1.0
-			var col: Color = cols[rng.randi() % cols.size()]
-			var inset := rng.randf_range(0.0, 0.6)
-			var inner: float = s * (LevelGen.RIVER_W * 0.5 + 1.0 + inset)
-			var m := _mat("wall_" + col.to_html(), col, 0.95, 0.0, 0.0)
-			_box(level_root, Vector3(30.0, hgt, seg + 0.02), Vector3(inner + s * 15.0, LevelGen.FLOOR_Y - 1.0 + hgt * 0.5, z + seg * 0.5), m)
-			# ledge detail
-			var ledge_y := rng.randf_range(1.5, top - 1.5)
-			_box(level_root, Vector3(0.5, 0.35, seg * rng.randf_range(0.4, 0.9)), Vector3(inner - s * 0.15, ledge_y, z + seg * 0.5), _mat("ledge_" + col.darkened(0.15).to_html(), col.darkened(0.15), 0.95, 0.0, 0.0))
-			if rng.randf() < 0.5:
-				_deco(Vector3(s * rng.randf_range(LevelGen.RIVER_W * 0.5 + 2.6, LevelGen.RIVER_W * 0.5 + 10.0), top, z + rng.randf_range(0.0, seg)))
-			if theme.deco == "ice":
-				_box(level_root, Vector3(30.0, 0.25, seg + 0.02), Vector3(inner + s * 15.0, top + 0.1, z + seg * 0.5), _mat("snow", Color("ffffff"), 0.8, 0.0, 0.0))
-			if rng.randf() < 0.1 and z > 10.0:
-				_waterfall(inner - s * 0.06, top, z + seg * 0.5, s)
-		z += seg
-	_box(level_root, Vector3(LevelGen.RIVER_W + 4.0, 1.0, length + 60.0),
-		Vector3(0.0, LevelGen.FLOOR_Y - 0.5, (length - 40.0) * 0.5 - 10.0), _mat("floor", theme.floor, 1.0, 0.0, 0.0))
-
-
-func _waterfall(x: float, top: float, z: float, side: float) -> void:
-	var q := QuadMesh.new()
-	q.size = Vector2(1.5, top - LevelGen.FLOOR_Y)
-	var sm := ShaderMaterial.new()
-	sm.shader = _fall_shader
-	sm.set_shader_parameter("color", theme.fall)
-	sm.set_shader_parameter("glow", theme.fall_glow)
-	var mi := _mi(level_root, q, sm, Vector3(x, LevelGen.FLOOR_Y + (top - LevelGen.FLOOR_Y) * 0.5, z), Vector3(0.0, -side * PI * 0.5, 0.0))
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-
-
-func _deco(base: Vector3) -> void:
-	var a: Color = theme.deco_a
-	var b: Color = theme.deco_b
-	var sc := rng.randf_range(0.8, 1.4)
-	match theme.deco:
-		"pine":
-			_cone(level_root, 0.18 * sc, 0.12 * sc, 0.8 * sc, base + Vector3(0.0, 0.4 * sc, 0.0), _mat("trunk", b))
-			_cone(level_root, 0.95 * sc, 0.0, 1.6 * sc, base + Vector3(0.0, 1.4 * sc, 0.0), _mat("leaf", a), 7)
-			_cone(level_root, 0.7 * sc, 0.0, 1.3 * sc, base + Vector3(0.0, 2.2 * sc, 0.0), _mat("leaf", a), 7)
-		"mushroom":
-			_cone(level_root, 0.12 * sc, 0.1 * sc, 0.9 * sc, base + Vector3(0.0, 0.45 * sc, 0.0), _mat("stem", Color("d8d0f0"), 0.8), 8)
-			_ball(level_root, 0.55 * sc, base + Vector3(0.0, 0.95 * sc, 0.0), _mat("cap", a, 0.4, 1.8), Vector3(1.0, 0.45, 1.0))
-		"palm":
-			var lean := rng.randf_range(-0.3, 0.3)
-			for k in 3:
-				_cone(level_root, 0.15 * sc, 0.13 * sc, 0.8 * sc, base + Vector3(lean * k * 0.4, (0.4 + k * 0.75) * sc, 0.0), _mat("trunk", b), 7, Vector3(0.0, 0.0, -lean))
-			var crown := base + Vector3(lean * 1.2, 2.4 * sc, 0.0)
-			for k in 6:
-				var ang := TAU * k / 6.0
-				_box(level_root, Vector3(1.4 * sc, 0.06, 0.35 * sc), crown + Vector3(cos(ang), -0.15, sin(ang)) * 0.6 * sc, _mat("leaf", a), Vector3(0.0, -ang, -0.35))
-		"ice":
-			for k in 3:
-				var hh := rng.randf_range(1.0, 2.6) * sc
-				_cone(level_root, 0.35 * sc, 0.0, hh, base + Vector3(rng.randf_range(-0.6, 0.6), hh * 0.5, rng.randf_range(-0.6, 0.6)), _mat("icespike", b, 0.2, 0.3), 4)
-		"crystal":
-			for k in 3:
-				var hc := rng.randf_range(0.8, 2.0) * sc
-				_cone(level_root, 0.3 * sc, 0.05, hc, base + Vector3(rng.randf_range(-0.5, 0.5), hc * 0.5, rng.randf_range(-0.5, 0.5)), _mat("crystal", a, 0.3, 2.2), 5, Vector3(rng.randf_range(-0.3, 0.3), 0.0, rng.randf_range(-0.3, 0.3)))
-
 
 func _spawn_ambient() -> void:
 	var kind: String = theme.particles
@@ -606,6 +637,22 @@ func _spawn_ambient() -> void:
 			g.set_color(1, Color(1.0, 1.0, 1.0, 0.0))
 			ambient.gravity = Vector3(0.3, -1.2, 0.0)
 			ambient.material_override = _fx_mat("amb_snow", Color.WHITE)
+		"motes":
+			var c: Color = theme.get("neon2", Color("00e5ff"))
+			g.set_color(0, Color(c, 0.0))
+			g.set_color(1, Color(c, 0.0))
+			g.add_point(0.5, Color(c, 1.0))
+			ambient.gravity = Vector3(0.0, 0.5, 0.0)
+			ambient.initial_velocity_max = 0.3
+			ambient.spread = 180.0
+			ambient.material_override = _fx_mat("amb_motes", Color.WHITE, 3.0)
+		"stars":
+			g.set_color(0, Color(1, 1, 1, 0.0))
+			g.set_color(1, Color(1, 1, 1, 0.0))
+			g.add_point(0.5, Color(1, 1, 1, 1.0))
+			ambient.gravity = Vector3.ZERO
+			ambient.emission_box_extents = Vector3(14.0, 8.0, 40.0)
+			ambient.material_override = _fx_mat("amb_stars", Color.WHITE, 2.0)
 		"embers":
 			g.set_color(0, Color(1.0, 0.6, 0.2, 1.0))
 			g.set_color(1, Color(1.0, 0.3, 0.1, 0.0))
@@ -629,11 +676,13 @@ func update(delta: float, run_t: float, t: float, water_y: float, boat_z: float,
 		raft.position.y = water_y + sin(t * 1.7) * 0.05
 		raft.rotation.z = sin(t * 1.3) * 0.04
 
+	_stream(boat_z)
 	var near := boat_z - 25.0
 	var far := boat_z + 110.0
-	for e in items:
+	for i in range(maxi(_next_item - 60, 0), _next_item):
+		var e: Dictionary = items[i]
 		var z: float = e.z
-		if z < near or z > far:
+		if z < near or z > far or not e.has("node") or e.get("gone", false):
 			continue
 		match e.kind:
 			"breather":
@@ -662,8 +711,9 @@ func update(delta: float, run_t: float, t: float, water_y: float, boat_z: float,
 			foam.visible = h > water_y - 0.15
 			foam.position.y = water_y + 0.03
 
-	for p in pearls:
-		if p.taken:
+	for i in range(maxi(_next_pearl - 120, 0), _next_pearl):
+		var p: Dictionary = pearls[i]
+		if p.taken or not p.has("node") or p.get("gone", false):
 			continue
 		var pz: float = p.z
 		if pz < near or pz > far:
@@ -693,6 +743,8 @@ func open_chest() -> void:
 ## Shield hit: the obstacle shatters out of the way.
 func smash(e: Dictionary) -> void:
 	e["smashed"] = true
+	if not e.has("node") or e.get("gone", false):
+		return
 	var n: Node3D = e.node
 	burst_splash(n.global_position + Vector3(0.0, 1.0, 0.0))
 	var tw := create_tween()
@@ -702,6 +754,8 @@ func smash(e: Dictionary) -> void:
 
 func take_pickup(e: Dictionary) -> void:
 	e.taken = true
+	if not e.has("spinner") or e.get("gone", false):
+		return
 	var sp: Node3D = e.spinner
 	var tw := create_tween().set_parallel(true)
 	tw.tween_property(sp, "scale", Vector3(2.0, 2.0, 2.0), 0.25)
@@ -711,6 +765,8 @@ func take_pickup(e: Dictionary) -> void:
 
 func take_pearl(p: Dictionary, to: Vector3) -> void:
 	p.taken = true
+	if not p.has("node") or p.get("gone", false):
+		return
 	sparkle.global_position = (p.node as Node3D).global_position
 	sparkle.restart()
 	var n: Node3D = p.node

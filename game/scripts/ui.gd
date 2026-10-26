@@ -11,6 +11,11 @@ signal shop_back
 signal shop_tab(cat: String)
 signal shop_pick(index: int)
 signal shop_action
+signal shop_side(slot: String)
+signal rank_closed
+signal endless_pressed
+signal share_pressed
+signal mystery_open
 signal toggle_changed(setting: String, value: bool)
 signal pause_pressed
 signal resume_pressed
@@ -37,11 +42,11 @@ signal race_done
 
 const INK := Color(0.07, 0.05, 0.16, 0.92)
 const GOLD := Color("ffd166")
-const PANEL := Color(0.08, 0.07, 0.2, 0.88)
-const BLUE := Color("4e7cff")
+const PANEL := Color(0.03, 0.04, 0.12, 0.9)
+const BLUE := Color("3a5cff")
 const GREEN := Color("2fbf71")
 const ORANGE := Color("f2994a")
-const PURPLE := Color("7b5cff")
+const PURPLE := Color("8a3dff")
 const BOTTOM_SAFE := 220.0  # keep buttons above the banner ad
 
 var font: Font
@@ -122,6 +127,23 @@ var shop_free_btn: Button
 var shop_tabs := {}
 var shop_tiles: HBoxContainer
 var shop_scroll: ScrollContainer
+var shop_title: Label
+var shop_side_row: HBoxContainer
+var shop_side_btns := {}
+var rank_label: Label
+var rank_bar: ProgressBar
+var rankup_panel: Control
+var rankup_title: Label
+var rankup_rows: VBoxContainer
+var rankup_next: Label
+var daily_track: HBoxContainer
+var endless_btn: Button
+var endless_best: Label
+var best_label: Label
+var lose_share: Button
+var lose_title: Label
+var chest_mystery_btn: Button
+var daily_tomorrow: Label
 
 var toggles := {}
 var privacy_btn: Button
@@ -147,8 +169,8 @@ var win_skip: Button
 
 func _ready() -> void:
 	layer = 10
-	font = load("res://fonts/Fredoka-Bold.ttf")
-	title_font = load("res://fonts/LilitaOne.ttf")
+	font = load("res://fonts/Exo2-Bold.ttf")
+	title_font = load("res://fonts/Exo2-BlackItalic.ttf")
 	var th := Theme.new()
 	th.default_font = font
 	th.default_font_size = 38
@@ -171,6 +193,7 @@ func _ready() -> void:
 	_build_chests()
 	_build_race()
 	_build_results()
+	_build_rankup()
 	_build_overlays()
 
 
@@ -214,7 +237,7 @@ func _label(text: String, font_size: int, color := Color.WHITE, outline := 10) -
 	l.text = text
 	var ls := LabelSettings.new()
 	ls.font = title_font if font_size >= 56 else font
-	ls.font_size = font_size
+	ls.font_size = int(font_size * 0.88) if font_size >= 56 else font_size
 	ls.font_color = color
 	ls.outline_size = outline
 	ls.outline_color = INK
@@ -233,12 +256,14 @@ func _style(color: Color, radius := 32, border := 8) -> StyleBoxFlat:
 	sb.bg_color = color
 	sb.set_corner_radius_all(radius)
 	if border > 0:
-		# "inked" outline like the logo: dark rim with a thicker bottom lip
-		sb.border_width_left = 4
-		sb.border_width_right = 4
-		sb.border_width_top = 4
-		sb.border_width_bottom = border + 2
-		sb.border_color = Toon.INK
+		# neon edge + soft glow (futuristic look), thicker lower lip for depth
+		sb.border_width_left = 3
+		sb.border_width_right = 3
+		sb.border_width_top = 3
+		sb.border_width_bottom = border
+		sb.border_color = color.lightened(0.5)
+		sb.shadow_color = Color(color.lightened(0.2), 0.45)
+		sb.shadow_size = 10
 	else:
 		sb.border_color = color.darkened(0.35)
 	sb.content_margin_left = 24
@@ -367,10 +392,10 @@ func _panel_box(width := 600.0) -> VBoxContainer:
 	sb.border_width_left = 3
 	sb.border_width_right = 3
 	sb.border_width_bottom = 3
-	sb.border_color = Color(1, 1, 1, 0.14)
-	sb.shadow_color = Color(0, 0, 0, 0.35)
-	sb.shadow_size = 18
-	sb.shadow_offset = Vector2(0, 10)
+	sb.border_color = Color(0.0, 0.9, 1.0, 0.75)
+	sb.shadow_color = Color(0.0, 0.8, 1.0, 0.25)
+	sb.shadow_size = 22
+	sb.shadow_offset = Vector2(0, 0)
 	panel.add_theme_stylebox_override("panel", sb)
 	panel.custom_minimum_size = Vector2(width, 0)
 	var box := VBoxContainer.new()
@@ -449,6 +474,10 @@ func _build_hud() -> void:
 	_place(progress, Control.PRESET_CENTER_TOP, -180, top + 58, 180, top + 82)
 	progress.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(progress)
+	best_label = _label("", 26, GOLD, 6)
+	_place(best_label, Control.PRESET_CENTER_TOP, -200, top + 52, 200, top + 84)
+	best_label.visible = false
+	hud.add_child(best_label)
 	progress_boat = IconDraw.new("boat", Color.WHITE)
 	progress_boat.size = Vector2(44, 44)
 	hud.add_child(progress_boat)
@@ -540,8 +569,32 @@ func _build_menu() -> void:
 		name_edit.text = Save.player_name
 		_pop(profile_panel))
 	menu.add_child(profile_btn)
+	rank_label = _label("RANK 1", 22, GOLD, 6)
+	rank_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_place(rank_label, Control.PRESET_TOP_LEFT, 30, top + 84, 330, top + 110)
+	menu.add_child(rank_label)
+	rank_bar = ProgressBar.new()
+	rank_bar.show_percentage = false
+	rank_bar.max_value = 1.0
+	rank_bar.step = 0.0
+	rank_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var rbg := _style(Color(0.08, 0.07, 0.2, 0.75), 10, 0)
+	rbg.content_margin_left = 0
+	rbg.content_margin_right = 0
+	rbg.border_width_left = 3
+	rbg.border_width_right = 3
+	rbg.border_width_top = 3
+	rbg.border_width_bottom = 3
+	rbg.border_color = Toon.INK
+	var rfill := _style(GOLD, 8, 0)
+	rfill.content_margin_left = 0
+	rfill.content_margin_right = 0
+	rank_bar.add_theme_stylebox_override("background", rbg)
+	rank_bar.add_theme_stylebox_override("fill", rfill)
+	_place(rank_bar, Control.PRESET_TOP_LEFT, 28, top + 112, 324, top + 132)
+	menu.add_child(rank_bar)
 	var gear := _round_button("gear", Color(0.08, 0.07, 0.2, 0.7), 76.0)
-	_place(gear, Control.PRESET_TOP_LEFT, 24, top + 96, 100, top + 172)
+	_place(gear, Control.PRESET_TOP_LEFT, 24, top + 142, 100, top + 218)
 	gear.pressed.connect(func(): settings_pressed.emit())
 	menu.add_child(gear)
 	var stars := _pill("star", GOLD)
@@ -604,12 +657,23 @@ func _build_menu() -> void:
 	boats.pressed.connect(func(): boats_pressed.emit())
 	menu.add_child(boats)
 
-	menu_hint = _label("HOLD ANYWHERE\nTO SAIL", 40, Color.WHITE, 12)
-	_place(menu_hint, Control.PRESET_TOP_WIDE, 150, top + 760, -150, top + 880)
+	menu_hint = _label("HOLD ANYWHERE\nTO SAIL", 36, Color.WHITE, 12)
+	_place(menu_hint, Control.PRESET_TOP_WIDE, 150, top + 704, -150, top + 800)
 	menu.add_child(menu_hint)
 	var tw := menu_hint.create_tween().set_loops()
 	tw.tween_property(menu_hint, "modulate:a", 0.35, 0.7)
 	tw.tween_property(menu_hint, "modulate:a", 1.0, 0.7)
+
+	endless_btn = _button("ENDLESS", Color("ff7a2f"), "wave", Vector2(300, 92), 36)
+	_place(endless_btn, Control.PRESET_CENTER_TOP, -150, top + 812, 150, top + 904)
+	endless_btn.pressed.connect(func(): endless_pressed.emit())
+	menu.add_child(endless_btn)
+	var glow := endless_btn.create_tween().set_loops()
+	glow.tween_property(endless_btn, "modulate", Color(1.15, 1.1, 1.0), 0.7).set_trans(Tween.TRANS_SINE)
+	glow.tween_property(endless_btn, "modulate", Color.WHITE, 0.7).set_trans(Tween.TRANS_SINE)
+	endless_best = _label("BEST 0", 24, GOLD, 6)
+	_place(endless_best, Control.PRESET_CENTER_TOP, -150, top + 904, 150, top + 934)
+	menu.add_child(endless_best)
 
 	free_btn = _button("+500", PURPLE, "ad", Vector2(300, 100))
 	_place(free_btn, Control.PRESET_CENTER_BOTTOM, -150, -BOTTOM_SAFE - 110, 150, -BOTTOM_SAFE - 10)
@@ -741,6 +805,10 @@ func _build_chests() -> void:
 	chest_star_btn = _button("STAR CHEST", ORANGE, "star", Vector2(460, 96))
 	chest_star_btn.pressed.connect(func(): chest_open.emit("star"))
 	box.add_child(_center(chest_star_btn))
+	chest_mystery_btn = _button("MYSTERY BOX  %s" % fmt(Save.MYSTERY_PRICE), PURPLE, "dice", Vector2(500, 96), 32)
+	chest_mystery_btn.pressed.connect(func(): mystery_open.emit())
+	box.add_child(_center(chest_mystery_btn))
+	box.add_child(_label("A guaranteed NEW item - could be a rare one!", 22, Color("cfe9ff"), 4))
 	var close := _link_button("Close")
 	close.pressed.connect(func(): chest_panel.visible = false)
 	box.add_child(_center(close))
@@ -771,6 +839,9 @@ func show_chests(free_left: int, star_progress: int, star_ready: bool) -> void:
 		chest_free_btn.text = "OPEN"
 	chest_star_bar.value = clampi(star_progress, 0, Save.STARS_PER_CHEST)
 	chest_star_btn.disabled = not star_ready
+	var pool_left := Save.mystery_pool().size()
+	chest_mystery_btn.disabled = pool_left == 0 or Save.coins < Save.MYSTERY_PRICE
+	_set_btn_text(chest_mystery_btn, "MYSTERY BOX  %s" % fmt(Save.MYSTERY_PRICE) if pool_left > 0 else "COLLECTION COMPLETE")
 	_set_btn_text(chest_star_btn, "OPEN STAR CHEST" if star_ready else "STARS %d / %d" % [clampi(star_progress, 0, Save.STARS_PER_CHEST), Save.STARS_PER_CHEST])
 	if not chest_panel.visible:
 		_pop(chest_panel)
@@ -970,6 +1041,53 @@ func results_doubled(total: int) -> void:
 	results_reward.create_tween().tween_property(results_reward, "scale", Vector2.ONE, 0.3).set_trans(Tween.TRANS_BACK)
 
 
+func set_rank(rank: int, into: int, need: int, title: String) -> void:
+	rank_label.text = "RANK %d · %s   %d/%d XP" % [rank, title, into, need]
+	rank_bar.value = float(into) / maxf(float(need), 1.0)
+
+
+func _build_rankup() -> void:
+	var box := _panel_box(600.0)
+	rankup_panel = box.get_meta("holder")
+	root.add_child(rankup_panel)
+	_modals.append(rankup_panel)
+	box.add_child(_label("RANK UP!", 86, GOLD, 16))
+	rankup_title = _label("RANK 2 · DECKHAND", 40, Color.WHITE, 10)
+	box.add_child(rankup_title)
+	rankup_rows = VBoxContainer.new()
+	rankup_rows.add_theme_constant_override("separation", 10)
+	box.add_child(rankup_rows)
+	rankup_next = _label("", 26, Color("cfe9ff"), 4)
+	rankup_next.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_child(rankup_next)
+	var ok := _button("COLLECT", GREEN, "check", Vector2(460, 104))
+	ok.pressed.connect(func():
+		rankup_panel.visible = false
+		rank_closed.emit())
+	box.add_child(_center(ok))
+	rankup_panel.visible = false
+
+
+## rows: [[icon_kind, color, text], ...]
+func show_rank_up(rank: int, title: String, rows: Array, next_text: String) -> void:
+	rankup_title.text = "RANK %d · %s" % [rank, title]
+	for ch in rankup_rows.get_children():
+		ch.queue_free()
+	for r in rows:
+		var h := HBoxContainer.new()
+		h.alignment = BoxContainer.ALIGNMENT_CENTER
+		h.add_theme_constant_override("separation", 12)
+		var ic := IconDraw.new(String(r[0]), r[1])
+		if r.size() > 3:
+			ic.color2 = r[3]
+		ic.custom_minimum_size = Vector2(60, 60)
+		h.add_child(ic)
+		h.add_child(_label(String(r[2]), 38, GOLD, 8))
+		rankup_rows.add_child(h)
+	rankup_next.text = next_text
+	_pop(rankup_panel)
+
+
 func modal_open() -> bool:
 	for m in _modals:
 		if m.visible:
@@ -997,10 +1115,13 @@ func _build_shop() -> void:
 	back.pressed.connect(func(): shop_back.emit())
 	shop.add_child(back)
 	var title := _label("WORKSHOP", 70, Color("fff3d6"), 14)
-	_place(title, Control.PRESET_TOP_WIDE, 0, top + 100, 0, top + 190)
+	_place(title, Control.PRESET_TOP_WIDE, 0, top + 92, 0, top + 172)
 	shop.add_child(title)
+	shop_title = _label("", 26, Color("cfe9ff"), 6)
+	_place(shop_title, Control.PRESET_TOP_WIDE, 0, top + 166, 0, top + 196)
+	shop.add_child(shop_title)
 	shop_free_btn = _button("+500 COINS", PURPLE, "ad", Vector2(340, 84), 30)
-	_place(shop_free_btn, Control.PRESET_CENTER_TOP, -170, top + 196, 170, top + 280)
+	_place(shop_free_btn, Control.PRESET_CENTER_TOP, -170, top + 204, 170, top + 288)
 	shop_free_btn.pressed.connect(func(): free_pressed.emit())
 	shop.add_child(shop_free_btn)
 
@@ -1020,14 +1141,26 @@ func _build_shop() -> void:
 	sheet.add_child(box)
 	var tabs := HBoxContainer.new()
 	tabs.alignment = BoxContainer.ALIGNMENT_CENTER
-	tabs.add_theme_constant_override("separation", 8)
+	tabs.add_theme_constant_override("separation", 5)
 	box.add_child(tabs)
 	for cat in Custom.CATS:
-		var t := _button(Custom.CAT_NAMES[cat], BLUE, "", Vector2(104, 66), 22)
+		var t := _button(Custom.CAT_NAMES[cat], BLUE, "", Vector2(86, 62), 19)
+		_tab_style(t, BLUE)
 		var c: String = cat
 		t.pressed.connect(func(): shop_tab.emit(c))
 		tabs.add_child(t)
 		shop_tabs[cat] = t
+	shop_side_row = HBoxContainer.new()
+	shop_side_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	shop_side_row.add_theme_constant_override("separation", 10)
+	box.add_child(shop_side_row)
+	for pair in [["wall_l", "LEFT WALL"], ["wall_r", "RIGHT WALL"]]:
+		var b := _button(pair[1], BLUE, "", Vector2(240, 58), 24)
+		var slot: String = pair[0]
+		b.pressed.connect(func(): shop_side.emit(slot))
+		shop_side_row.add_child(b)
+		shop_side_btns[slot] = b
+	shop_side_row.visible = false
 	shop_name = _label("DINGHY", 46, Color.WHITE, 10)
 	box.add_child(shop_name)
 	shop_status = _label("", 28, GOLD, 6)
@@ -1044,6 +1177,14 @@ func _build_shop() -> void:
 	box.add_child(_center(shop_action_btn))
 
 
+func _tab_style(t: Button, col: Color) -> void:
+	for state in ["normal", "hover", "pressed"]:
+		var st := _style(col if state != "pressed" else col.darkened(0.15), 20, 5)
+		st.content_margin_left = 4
+		st.content_margin_right = 4
+		t.add_theme_stylebox_override(state, st)
+
+
 func _tile_icon(cat: String, it: Dictionary) -> IconDraw:
 	var ic := IconDraw.new()
 	match cat:
@@ -1055,11 +1196,19 @@ func _tile_icon(cat: String, it: Dictionary) -> IconDraw:
 			ic.color2 = it.b
 			ic.set_kind("flag2", it.a)
 		"hat":
-			ic.color2 = Color("e8433a")
+			ic.color2 = Color("00e5ff")
 			ic.set_kind("hat", Color("f7f7f2") if it.kind == "cap" else (Color("ffc531") if it.kind == "crown" else Color("ff8fd8") if it.kind == "party" else Color("f0c96b") if it.kind == "straw" else Color("2b2f5a")))
 		"trail":
 			ic.color2 = it.b
 			ic.set_kind("wake", it.a)
+		"wall":
+			var wc := {"canyon": [Color("2a1f55"), Color("ff2fd0")], "harbor": [Color("3a3f6a"), Color("00e5ff")],
+				"pier": [Color("4e5872"), Color("ff2fd0")], "village": [Color("dfe6f5"), Color("00e5ff")],
+				"crystal": [Color("2a2346"), Color("6be3ff")], "candy": [Color("7a1a8a"), Color("ff4fa8")],
+				"temple": [Color("e2c27a"), Color("ffc531")], "neon": [Color("1c1f3a"), Color("ff2fd0")]}
+			var pair: Array = wc.get(String(it.style), [Color.GRAY, Color.WHITE])
+			ic.color2 = pair[1]
+			ic.set_kind("wall", pair[0])
 	return ic
 
 
@@ -1113,6 +1262,13 @@ func _build_daily() -> void:
 	gift.resized.connect(func(): gift.pivot_offset = gift.size * 0.5)
 	daily_amount_label = _label("+100", 64, GOLD, 12)
 	box.add_child(daily_amount_label)
+	daily_track = HBoxContainer.new()
+	daily_track.alignment = BoxContainer.ALIGNMENT_CENTER
+	daily_track.add_theme_constant_override("separation", 6)
+	box.add_child(daily_track)
+	daily_tomorrow = _label("", 26, Color("cfe9ff"), 4)
+	daily_tomorrow.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_child(daily_tomorrow)
 	var x2 := _button("CLAIM x2", GREEN, "ad")
 	x2.pressed.connect(func(): daily_claim.emit(2))
 	box.add_child(x2)
@@ -1143,7 +1299,8 @@ func _build_lose() -> void:
 	var box := _panel_box(620.0)
 	lose_panel = box.get_meta("holder")
 	root.add_child(lose_panel)
-	box.add_child(_label("WRECKED!", 84, Color("ff7b6b"), 14))
+	lose_title = _label("WRECKED!", 84, Color("ff7b6b"), 14)
+	box.add_child(lose_title)
 	lose_info = _label("", 32, Color("cfe9ff"), 6)
 	box.add_child(lose_info)
 	lose_bar = ProgressBar.new()
@@ -1167,9 +1324,16 @@ func _build_lose() -> void:
 	lose_claim = _button("CLAIM x2", GREEN, "ad", Vector2(520, 110))
 	lose_claim.pressed.connect(func(): claim_pressed.emit(lose_mult.stop()))
 	box.add_child(lose_claim)
+	var bottom := HBoxContainer.new()
+	bottom.alignment = BoxContainer.ALIGNMENT_CENTER
+	bottom.add_theme_constant_override("separation", 20)
+	box.add_child(bottom)
+	lose_share = _button("SHARE", BLUE, "share", Vector2(200, 72), 28)
+	lose_share.pressed.connect(func(): share_pressed.emit())
+	bottom.add_child(lose_share)
 	lose_skip = _link_button("No thanks")
 	lose_skip.pressed.connect(func(): retry_pressed.emit())
-	box.add_child(lose_skip)
+	bottom.add_child(lose_skip)
 	lose_panel.visible = false
 
 
@@ -1328,34 +1492,41 @@ func set_free_state(seconds_left: int, reward: int) -> void:
 	shop_free_btn.disabled = not is_ready
 
 
-func show_shop(cat: String, sel: int, coins: int) -> void:
+func show_shop(cat: String, sel: int, coins: int, slot: String) -> void:
 	if not shop.visible:
 		_only(shop)
 	set_coins(coins)
+	shop_title.text = "COLLECTION  %d / %d" % [Save.owned_count(), Custom.total_items()]
 	for c in shop_tabs:
-		var t: Button = shop_tabs[c]
-		var col := GOLD.darkened(0.1) if c == cat else BLUE
-		t.add_theme_stylebox_override("normal", _style(col, 22, 6))
-		t.add_theme_stylebox_override("hover", _style(col.lightened(0.06), 22, 6))
-	# rebuild tiles
+		_tab_style(shop_tabs[c], GOLD.darkened(0.1) if c == cat else BLUE)
+	shop_side_row.visible = cat == "wall"
+	for sl in shop_side_btns:
+		var b: Button = shop_side_btns[sl]
+		var on: bool = sl == slot
+		b.add_theme_stylebox_override("normal", _style(GREEN if on else Color("4a4f6e"), 22, 5))
+		b.add_theme_stylebox_override("hover", _style(GREEN if on else Color("4a4f6e"), 22, 5))
 	for ch in shop_tiles.get_children():
 		ch.queue_free()
 	var items := Custom.items(cat)
 	for i in items.size():
 		var it: Dictionary = items[i]
 		var owned := Save.owns(cat, i)
-		var equipped := Save.equipped(cat) == i
+		var equipped := Save.equipped(slot) == i
+		var rarity := Custom.rarity(it)
+		var rcol: Color = Custom.RARITY_COLORS[rarity]
 		var tile := Button.new()
-		tile.custom_minimum_size = Vector2(128, 164)
+		tile.custom_minimum_size = Vector2(128, 168)
 		tile.focus_mode = Control.FOCUS_NONE
 		tile.mouse_filter = Control.MOUSE_FILTER_PASS
 		var base := Color(0.17, 0.15, 0.36) if owned else Color(0.12, 0.1, 0.25)
 		var st := _style(base, 24, 6)
+		st.border_color = rcol.darkened(0.25)
+		st.border_width_bottom = 12
 		if i == sel:
 			st.border_color = GOLD
-			st.border_width_left = 6
-			st.border_width_right = 6
-			st.border_width_top = 6
+			st.border_width_left = 7
+			st.border_width_right = 7
+			st.border_width_top = 7
 		tile.add_theme_stylebox_override("normal", st)
 		tile.add_theme_stylebox_override("hover", st)
 		tile.add_theme_stylebox_override("pressed", st)
@@ -1363,16 +1534,27 @@ func show_shop(cat: String, sel: int, coins: int) -> void:
 		var v := VBoxContainer.new()
 		v.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		v.offset_top = 10
-		v.offset_bottom = -10
+		v.offset_bottom = -14
 		v.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		v.alignment = BoxContainer.ALIGNMENT_CENTER
 		tile.add_child(v)
 		var ic := _tile_icon(cat, it)
 		ic.custom_minimum_size = Vector2(76, 76)
 		v.add_child(_center(ic))
-		var sub := "ON" if equipped else ("OWNED" if owned else fmt(int(it.price)))
-		var sub_col := GREEN.lightened(0.3) if equipped else (Color(1, 1, 1, 0.7) if owned else GOLD)
-		var l := _label(sub, 24, sub_col, 6)
+		var sub := ""
+		var sub_col := Color(1, 1, 1, 0.7)
+		if equipped:
+			sub = "ON"
+			sub_col = GREEN.lightened(0.3)
+		elif owned:
+			sub = "OWNED"
+		elif Custom.is_exclusive(it):
+			sub = Custom.unlock_text(it).replace("7-DAY STREAK", "DAY 7")
+			sub_col = rcol.lightened(0.2)
+		else:
+			sub = fmt(int(it.price))
+			sub_col = GOLD
+		var l := _label(sub, 22, sub_col, 6)
 		v.add_child(l)
 		if not owned:
 			var lock := IconDraw.new("lock", Color(1, 1, 1, 0.55))
@@ -1384,25 +1566,28 @@ func show_shop(cat: String, sel: int, coins: int) -> void:
 		_juice(tile)
 		shop_tiles.add_child(tile)
 	var cur: Dictionary = items[sel]
+	var rar := Custom.rarity(cur)
 	shop_name.text = String(cur.name)
+	shop_status.text = rar.to_upper()
+	shop_status.label_settings.font_color = Custom.RARITY_COLORS[rar].lightened(0.15)
 	var owned_sel := Save.owns(cat, sel)
 	shop_action_btn.disabled = false
-	if Save.equipped(cat) == sel:
-		shop_status.text = "EQUIPPED"
+	if Save.equipped(slot) == sel:
 		shop_action_btn.text = "EQUIPPED"
 		shop_action_btn.disabled = true
 	elif owned_sel:
-		shop_status.text = "OWNED"
-		shop_action_btn.text = "EQUIP"
+		shop_action_btn.text = "EQUIP" if cat != "wall" else ("PUT LEFT" if slot == "wall_l" else "PUT RIGHT")
+	elif Custom.is_exclusive(cur):
+		shop_status.text = "EXCLUSIVE · " + Custom.unlock_text(cur)
+		shop_action_btn.text = "REACH " + Custom.unlock_text(cur) if Custom.unlock_text(cur).begins_with("RANK") else "LOG IN 7 DAYS"
+		shop_action_btn.disabled = true
 	else:
-		shop_status.text = "%s COINS" % fmt(int(cur.price))
+		shop_status.text = "%s · %s COINS" % [rar.to_upper(), fmt(int(cur.price))]
 		shop_action_btn.text = "BUY  %s" % fmt(int(cur.price))
 		shop_action_btn.disabled = coins < int(cur.price)
-	var pivot := shop_name.size * 0.5
-	shop_name.pivot_offset = pivot
+	shop_name.pivot_offset = shop_name.size * 0.5
 	shop_name.scale = Vector2(0.85, 0.85)
 	shop_name.create_tween().tween_property(shop_name, "scale", Vector2.ONE, 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	# keep the selected tile in view
 	shop_scroll.set_deferred("scroll_horizontal", maxi(0, sel * 140 - 220))
 
 
@@ -1416,8 +1601,36 @@ func show_settings(sound: bool, music: bool, vibe: bool, privacy_needed: bool) -
 
 
 func show_daily(day: int, amount: int) -> void:
-	daily_day_label.text = "DAY %d  ·  COME BACK TOMORROW FOR MORE" % day if day < Save.DAILY_MAX_STREAK else "DAY %d  ·  MAX STREAK!" % day
+	daily_day_label.text = "DAY %d OF 7" % day
 	daily_amount_label.text = "+%s" % fmt(amount)
+	for ch in daily_track.get_children():
+		ch.queue_free()
+	var ex := Custom.streak_unlock()
+	for d in range(1, 8):
+		var cell := PanelContainer.new()
+		var col := GREEN if d < day else (GOLD.darkened(0.1) if d == day else Color(0.15, 0.13, 0.32))
+		var sb := _style(col, 16, 4)
+		sb.content_margin_left = 4
+		sb.content_margin_right = 4
+		cell.add_theme_stylebox_override("panel", sb)
+		cell.custom_minimum_size = Vector2(70, 86)
+		var v := VBoxContainer.new()
+		v.alignment = BoxContainer.ALIGNMENT_CENTER
+		cell.add_child(v)
+		v.add_child(_label("D%d" % d, 20, Color.WHITE, 4))
+		var ic := IconDraw.new("chest" if d == 7 else "coin", Color("ff4d1f") if d == 7 else GOLD)
+		ic.custom_minimum_size = Vector2(36, 36)
+		v.add_child(_center(ic))
+		daily_track.add_child(cell)
+	if day < 7:
+		var tomorrow := (day + 1) * Save.DAILY_STEP
+		daily_tomorrow.text = "Come back tomorrow: +%s" % fmt(tomorrow)
+		if day + 1 == 7 and not ex.is_empty():
+			daily_tomorrow.text += "\nand the exclusive %s %s!" % [String(Custom.item(ex[0], ex[1]).name), Custom.CAT_NAMES[ex[0]]]
+		elif not ex.is_empty():
+			daily_tomorrow.text += "\nDay 7: exclusive %s %s" % [String(Custom.item(ex[0], ex[1]).name), Custom.CAT_NAMES[ex[0]]]
+	else:
+		daily_tomorrow.text = "Max streak! Keep it going every day."
 	_pop(daily_panel)
 
 
@@ -1428,7 +1641,23 @@ func hide_daily() -> void:
 func show_hud(level: int) -> void:
 	_only(hud)
 	level_label.text = "LEVEL %d" % level
+	progress.visible = true
+	progress_boat.visible = true
+	best_label.visible = false
 	set_progress(0.0)
+
+
+func show_endless_hud(best: int) -> void:
+	_only(hud)
+	progress.visible = false
+	progress_boat.visible = false
+	best_label.visible = true
+	best_label.text = "BEST %s" % fmt(best)
+	set_score(0)
+
+
+func set_score(score: int) -> void:
+	level_label.text = fmt(score)
 
 
 func show_pause() -> void:
@@ -1438,7 +1667,11 @@ func show_pause() -> void:
 
 func show_lose(can_continue: bool, progress_done: float, run_coins: int) -> void:
 	_only(lose_panel)
+	lose_title.text = "WRECKED!"
+	lose_title.label_settings.font_color = Color("ff7b6b")
 	lose_info.text = "You made it %d%% of the way" % int(progress_done * 100.0)
+	lose_bar.visible = true
+	lose_share.visible = false
 	lose_bar.value = progress_done
 	continue_btn.visible = can_continue
 	lose_coins.text = fmt(run_coins)
@@ -1451,6 +1684,23 @@ func show_lose(can_continue: bool, progress_done: float, run_coins: int) -> void
 	_set_btn_text(lose_skip, "No thanks" if has_coins else "Try again")
 	_delay_skip(lose_skip, has_coins)
 	_pop(lose_panel)
+
+
+func show_lose_endless(score: int, best: int, new_best: bool, can_continue: bool, run_coins: int) -> void:
+	show_lose(can_continue, 0.0, run_coins)
+	lose_bar.visible = false
+	lose_share.visible = true
+	lose_title.text = "NEW BEST!" if new_best else "SCORE %s" % fmt(score)
+	lose_title.label_settings.font_color = GOLD if new_best else Color("ff7b6b")
+	lose_info.text = ("%s  ·  previous best %s" % [fmt(score), fmt(best)]) if new_best else ("BEST  %s" % fmt(best))
+	if new_best:
+		lose_title.pivot_offset = lose_title.size * 0.5
+		lose_title.scale = Vector2(1.6, 1.6)
+		lose_title.create_tween().tween_property(lose_title, "scale", Vector2.ONE, 0.45).set_trans(Tween.TRANS_ELASTIC).set_ease(Tween.EASE_OUT)
+
+
+func set_endless_best(best: int) -> void:
+	endless_best.text = "BEST %s" % fmt(best) if best > 0 else "NEW MODE!"
 
 
 func show_win(level: int, stars: int, run_coins: int) -> void:

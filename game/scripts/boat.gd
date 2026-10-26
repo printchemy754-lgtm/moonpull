@@ -14,6 +14,7 @@ var arm_l: Node3D
 var arm_r: Node3D
 var flag: Node3D
 var spin_parts: Array[Node3D] = []
+var thrusters: Array[CPUParticles3D] = []
 var wake: CPUParticles3D
 var spray: CPUParticles3D
 var smoke: CPUParticles3D
@@ -44,6 +45,7 @@ func apply(new_cfg: Dictionary) -> void:
 	captain = null
 	smoke = null
 	spin_parts.clear()
+	thrusters.clear()
 	model = Node3D.new()
 	pivot.add_child(model)
 	var paint: Color = Custom.item("paint", cfg.get("paint", 0)).color
@@ -78,6 +80,9 @@ func tick(delta: float, t: float, water_vel: float, speed_factor: float, alive: 
 	for p in spin_parts:
 		p.rotation.y += delta * 2.0
 	var moving := alive and speed_factor > 0.05
+	for th in thrusters:
+		th.emitting = moving
+		th.speed_scale = clampf(speed_factor, 0.6, 1.8)
 	wake.emitting = moving
 	spray.emitting = moving and speed_factor > 1.2
 	if smoke:
@@ -195,9 +200,9 @@ func _hull(length: float, width: float, depth: float, bow_rise: float, hull_col:
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh
 	model.add_child(mi)
-	_box(Vector3(width * 0.98, 0.07, length * 0.6), _m(stripe_col, 0.0, 0.0), Vector3(0.0, 0.1, -length * 0.08))
-	# rail along the deck edge
-	_box(Vector3(width * 1.02, 0.06, length * 0.7), _m(Color("f4ead8"), 0.0, 0.015), Vector3(0.0, 0.3, -length * 0.1))
+	# neon accent line along the hull + chrome deck trim
+	_box(Vector3(width * 1.0, 0.045, length * 0.62), _m(stripe_col, 2.2, 0.0), Vector3(0.0, 0.12, -length * 0.08))
+	_box(Vector3(width * 1.02, 0.05, length * 0.7), _m(Color("c0c8dc"), 0.0, 0.012), Vector3(0.0, 0.3, -length * 0.1))
 
 
 ## Lofted, chubby V-hull with a raised bow. Surface 0 = hull, surface 1 = deck.
@@ -256,76 +261,89 @@ static func _quad(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, d: Vector
 	_tri(st, a, c, d, outward)
 
 
-# ------------------------------------------------------------------ captain
+# ------------------------------------------------------------------ pilot
 
-func _captain(pos: Vector3, hat: String, shirt: Color, seated := false) -> void:
+## The pilot: rounded suit, helmet with a glowing visor, raises both arms to pull the moon.
+func _captain(pos: Vector3, hat: String, accent: Color, seated := false) -> void:
 	captain = Node3D.new()
 	captain.position = pos
 	captain.set_meta("base_y", pos.y)
 	model.add_child(captain)
-	var white := _m(Color("f7f7f2"))
-	var navy := _m(NAVY)
+	var suit := _m(Color("f2f5fa"))
+	var dark := _m(NAVY)
 	var skin := _m(SKIN)
-	var black := _m(Color("15122b"), 0.0, 0.0)
+	var glow := _m(accent, 2.2, 0.0)
 	if not seated:
-		_cyl(0.09, 0.09, 0.14, navy, Vector3(-0.07, 0.07, 0.0), Vector3.ZERO, 8, captain)
-		_cyl(0.09, 0.09, 0.14, navy, Vector3(0.07, 0.07, 0.0), Vector3.ZERO, 8, captain)
+		_cyl(0.085, 0.09, 0.14, dark, Vector3(-0.07, 0.07, 0.0), Vector3.ZERO, 8, captain)
+		_cyl(0.085, 0.09, 0.14, dark, Vector3(0.07, 0.07, 0.0), Vector3.ZERO, 8, captain)
 	var by := 0.06 if seated else 0.14
-	_cyl(0.17, 0.19, 0.34, white, Vector3(0.0, by + 0.17, 0.0), Vector3.ZERO, 14, captain)
-	for k in 2:
-		_cyl(0.192, 0.192, 0.045, _m(shirt, 0.0, 0.0), Vector3(0.0, by + 0.1 + k * 0.12, 0.0), Vector3.ZERO, 14, captain)
+	_cyl(0.17, 0.19, 0.34, suit, Vector3(0.0, by + 0.17, 0.0), Vector3.ZERO, 14, captain)
+	_box(Vector3(0.05, 0.3, 0.02), glow, Vector3(0.0, by + 0.18, 0.19), Vector3.ZERO, captain)
+	_box(Vector3(0.36, 0.05, 0.4), dark, Vector3(0.0, by + 0.04, 0.0), Vector3.ZERO, captain)
 	var head_y := by + 0.5
-	_sphere(0.2, skin, Vector3(0.0, head_y, 0.0), Vector3.ONE, captain)
+	_sphere(0.19, skin, Vector3(0.0, head_y, 0.0), Vector3.ONE, captain)
 	for sx in [-1.0, 1.0]:
-		_sphere(0.032, black, Vector3(sx * 0.075, head_y + 0.03, 0.175), Vector3(1.0, 1.25, 1.0), captain)
-		_sphere(0.034, _m(Color("ff9aa8"), 0.0, 0.0), Vector3(sx * 0.12, head_y - 0.045, 0.15), Vector3(1.2, 0.8, 0.6), captain)
-	_sphere(0.035, _m(Color("f2b28c"), 0.0, 0.0), Vector3(0.0, head_y - 0.01, 0.2), Vector3.ONE, captain)
+		_sphere(0.03, _m(Color("15122b"), 0.0, 0.0), Vector3(sx * 0.07, head_y + 0.02, 0.17), Vector3(1.0, 1.25, 1.0), captain)
+		_sphere(0.032, _m(Color("ff9aa8"), 0.0, 0.0), Vector3(sx * 0.115, head_y - 0.05, 0.14), Vector3(1.2, 0.8, 0.6), captain)
 	arm_l = Node3D.new()
 	arm_l.position = Vector3(-0.19, by + 0.3, 0.0)
 	captain.add_child(arm_l)
-	_capsule(0.055, 0.32, white, Vector3(0.0, -0.13, 0.0), arm_l)
-	_sphere(0.06, skin, Vector3(0.0, -0.3, 0.0), Vector3.ONE, arm_l)
+	_capsule(0.055, 0.32, suit, Vector3(0.0, -0.13, 0.0), arm_l)
+	_sphere(0.065, dark, Vector3(0.0, -0.3, 0.0), Vector3.ONE, arm_l)
 	arm_r = Node3D.new()
 	arm_r.position = Vector3(0.19, by + 0.3, 0.0)
 	captain.add_child(arm_r)
-	_capsule(0.055, 0.32, white, Vector3(0.0, -0.13, 0.0), arm_r)
-	_sphere(0.06, skin, Vector3(0.0, -0.3, 0.0), Vector3.ONE, arm_r)
-	_hat(hat, head_y + 0.14, shirt)
+	_capsule(0.055, 0.32, suit, Vector3(0.0, -0.13, 0.0), arm_r)
+	_sphere(0.065, dark, Vector3(0.0, -0.3, 0.0), Vector3.ONE, arm_r)
+	_hat(hat, head_y, accent)
 
 
+## Headgear (the "HAT" workshop slot). y = centre of the head.
 func _hat(kind: String, y: float, accent: Color) -> void:
 	var p := captain
+	var shell := _m(Color("f2f5fa"))
+	var glow := _m(accent, 2.4, 0.0)
+	var visor := func(col: Material) -> void:
+		_box(Vector3(0.3, 0.09, 0.08), col, Vector3(0.0, y + 0.02, 0.17), Vector3.ZERO, p)
 	match kind:
-		"beanie":
-			_sphere(0.215, _m(Color("e8433a")), Vector3(0.0, y - 0.05, 0.0), Vector3(1.0, 0.72, 1.0), p)
-			_cyl(0.22, 0.22, 0.06, _m(Color("f7f7f2")), Vector3(0.0, y - 0.07, 0.0), Vector3.ZERO, 14, p)
-			_sphere(0.065, _m(Color("f7f7f2")), Vector3(0.0, y + 0.12, 0.0), Vector3.ONE, p)
-		"straw":
-			_cyl(0.36, 0.34, 0.03, _m(Color("f0c96b")), Vector3(0.0, y - 0.03, 0.0), Vector3.ZERO, 18, p)
-			_cyl(0.19, 0.17, 0.15, _m(Color("f0c96b")), Vector3(0.0, y + 0.05, 0.0), Vector3.ZERO, 14, p)
-			_cyl(0.195, 0.195, 0.045, _m(accent), Vector3(0.0, y + 0.0, 0.0), Vector3.ZERO, 14, p)
-		"party":
-			_cyl(0.14, 0.0, 0.34, _m(Color("ff4fd8")), Vector3(0.0, y + 0.13, 0.0), Vector3.ZERO, 12, p)
-			_cyl(0.105, 0.075, 0.07, _m(Color("ffd23f"), 0.0, 0.0), Vector3(0.0, y + 0.06, 0.0), Vector3.ZERO, 12, p)
-			_sphere(0.055, _m(Color("ffd23f")), Vector3(0.0, y + 0.31, 0.0), Vector3.ONE, p)
-		"top":
-			_cyl(0.28, 0.28, 0.03, _m(Color("1e1b2e")), Vector3(0.0, y - 0.03, 0.0), Vector3.ZERO, 18, p)
-			_cyl(0.17, 0.18, 0.3, _m(Color("1e1b2e")), Vector3(0.0, y + 0.13, 0.0), Vector3.ZERO, 14, p)
-			_cyl(0.185, 0.185, 0.05, _m(Color("e8433a"), 0.0, 0.0), Vector3(0.0, y + 0.02, 0.0), Vector3.ZERO, 14, p)
-		"crown":
-			var gold := _m(Color("ffc531"), 0.3)
-			_cyl(0.18, 0.19, 0.12, gold, Vector3(0.0, y + 0.01, 0.0), Vector3.ZERO, 14, p)
-			for k in 5:
-				var a := TAU * k / 5.0
-				_cyl(0.05, 0.0, 0.12, gold, Vector3(cos(a) * 0.15, y + 0.12, sin(a) * 0.15), Vector3.ZERO, 6, p)
-			_sphere(0.04, _m(Color("ff3d5a"), 0.8, 0.0), Vector3(0.0, y + 0.02, 0.19), Vector3.ONE, p)
-		_:  # captain's cap
-			_cyl(0.205, 0.215, 0.11, _m(Color("f7f7f2")), Vector3(0.0, y + 0.0, 0.0), Vector3.ZERO, 14, p)
-			_cyl(0.23, 0.22, 0.04, _m(NAVY), Vector3(0.0, y - 0.05, 0.0), Vector3.ZERO, 14, p)
-			_box(Vector3(0.26, 0.03, 0.14), _m(Color("15122b")), Vector3(0.0, y - 0.06, 0.2), Vector3(0.25, 0.0, 0.0), p)
-			_sphere(0.035, _m(Color("ffc531"), 0.5, 0.0), Vector3(0.0, y + 0.0, 0.205), Vector3.ONE, p)
+		"beanie":   # HEADSET
+			_sphere(0.215, _m(Color("2b2f5a")), Vector3(0.0, y + 0.05, -0.01), Vector3(1.0, 0.85, 1.0), p)
+			for sx in [-1.0, 1.0]:
+				_cyl(0.08, 0.08, 0.06, glow, Vector3(sx * 0.2, y, 0.0), Vector3(0.0, 0.0, PI * 0.5), 12, p)
+			_box(Vector3(0.02, 0.02, 0.18), _m(Color("2b2f5a")), Vector3(-0.17, y - 0.08, 0.1), Vector3(0.0, -0.4, 0.0), p)
+			_sphere(0.025, glow, Vector3(-0.1, y - 0.1, 0.18), Vector3.ONE, p)
+		"straw":    # VISOR CAP
+			_sphere(0.205, shell, Vector3(0.0, y + 0.06, 0.0), Vector3(1.0, 0.75, 1.0), p)
+			_box(Vector3(0.34, 0.14, 0.1), _m(accent, 1.4, 0.015), Vector3(0.0, y + 0.03, 0.18), Vector3(-0.15, 0.0, 0.0), p)
+		"party":    # ANTENNA
+			_sphere(0.215, shell, Vector3(0.0, y + 0.04, 0.0), Vector3(1.0, 0.9, 1.0), p)
+			visor.call(glow)
+			_cyl(0.012, 0.012, 0.3, _m(Color("8a94b0")), Vector3(0.08, y + 0.32, 0.0), Vector3.ZERO, 6, p)
+			_sphere(0.05, _m(Color("ff3d5a"), 3.0, 0.0), Vector3(0.08, y + 0.48, 0.0), Vector3.ONE, p)
+		"top":      # MOHAWK
+			_sphere(0.215, _m(Color("1e1b2e")), Vector3(0.0, y + 0.04, 0.0), Vector3(1.0, 0.9, 1.0), p)
+			visor.call(glow)
+			_box(Vector3(0.05, 0.16, 0.36), glow, Vector3(0.0, y + 0.24, -0.02), Vector3.ZERO, p)
+		"crown":    # HALO CROWN
+			_sphere(0.215, shell, Vector3(0.0, y + 0.04, 0.0), Vector3(1.0, 0.9, 1.0), p)
+			visor.call(_m(Color("ffc531"), 2.0, 0.0))
+			var halo := Node3D.new()
+			halo.position = Vector3(0.0, y + 0.36, 0.0)
+			p.add_child(halo)
+			_torus(0.14, 0.2, _m(Color("ffc531"), 2.5, 0.0), Vector3.ZERO, Vector3.ZERO, halo)
+			spin_parts.append(halo)
+		"pirate":   # CYBER PIRATE
+			var black := _m(Color("1e1b2e"))
+			_cyl(0.33, 0.33, 0.035, black, Vector3(0.0, y + 0.1, 0.0), Vector3.ZERO, 3, p)
+			_cyl(0.2, 0.18, 0.16, black, Vector3(0.0, y + 0.18, 0.0), Vector3.ZERO, 14, p)
+			_box(Vector3(0.09, 0.07, 0.04), _m(Color("ff2a2a"), 3.0, 0.0), Vector3(0.07, y + 0.02, 0.185), Vector3.ZERO, p)
+		_:          # PILOT helmet
+			_sphere(0.215, shell, Vector3(0.0, y + 0.04, -0.01), Vector3(1.0, 0.92, 1.0), p)
+			visor.call(glow)
+			_box(Vector3(0.04, 0.12, 0.3), _m(accent, 0.0, 0.0), Vector3(0.0, y + 0.22, -0.02), Vector3.ZERO, p)
 
 
+## Holographic flag on a thin antenna.
 func _flag_at(pos: Vector3) -> void:
 	var f := Custom.item("flag", cfg.get("flag", 0))
 	flag = Node3D.new()
@@ -333,118 +351,151 @@ func _flag_at(pos: Vector3) -> void:
 	model.add_child(flag)
 	var a: Color = f.a
 	var b: Color = f.b
-	_box(Vector3(0.03, 0.2, 0.34), _m(a, 0.0, 0.012), Vector3(0.0, 0.0, -0.17), Vector3.ZERO, flag)
+	_box(Vector3(0.025, 0.2, 0.34), _m(a, 0.8, 0.0), Vector3(0.0, 0.0, -0.17), Vector3.ZERO, flag)
 	match String(f.pattern):
 		"stripes":
 			for k in 2:
-				_box(Vector3(0.035, 0.04, 0.34), _m(b, 0.0, 0.0), Vector3(0.0, -0.05 + k * 0.1, -0.17), Vector3.ZERO, flag)
+				_box(Vector3(0.03, 0.04, 0.34), _m(b, 1.2, 0.0), Vector3(0.0, -0.05 + k * 0.1, -0.17), Vector3.ZERO, flag)
 		"cross":
-			_box(Vector3(0.035, 0.2, 0.05), _m(b, 0.0, 0.0), Vector3(0.0, 0.0, -0.11), Vector3.ZERO, flag)
-			_box(Vector3(0.035, 0.05, 0.34), _m(b, 0.0, 0.0), Vector3(0.0, 0.0, -0.17), Vector3.ZERO, flag)
+			_box(Vector3(0.03, 0.2, 0.05), _m(b, 1.2, 0.0), Vector3(0.0, 0.0, -0.11), Vector3.ZERO, flag)
+			_box(Vector3(0.03, 0.05, 0.34), _m(b, 1.2, 0.0), Vector3(0.0, 0.0, -0.17), Vector3.ZERO, flag)
 		"dot":
-			_cyl(0.06, 0.06, 0.04, _m(b, 0.0, 0.0), Vector3(0.0, 0.0, -0.17), Vector3(0.0, 0.0, PI * 0.5), 12, flag)
+			_cyl(0.06, 0.06, 0.035, _m(b, 1.2, 0.0), Vector3(0.0, 0.0, -0.17), Vector3(0.0, 0.0, PI * 0.5), 12, flag)
 
 
-func _mast(z: float, height: float) -> void:
-	_cyl(0.05, 0.04, height, _m(Color("7a5236")), Vector3(0.0, 0.3 + height * 0.5, z))
-	_flag_at(Vector3(0.0, 0.3 + height - 0.08, z))
+func _antenna(pos: Vector3, height: float) -> void:
+	_cyl(0.025, 0.018, height, _m(Color("c0c8dc")), pos + Vector3(0.0, height * 0.5, 0.0), Vector3.ZERO, 6)
+	_flag_at(pos + Vector3(0.0, height - 0.1, 0.0))
 
 
-# ------------------------------------------------------------------ hulls
-
-func _dinghy(paint: Color, sail: Color, hat: String) -> void:
-	_hull(2.4, 1.3, 0.4, 0.24, paint, Color("e9d3a8"), paint.darkened(0.3))
-	_box(Vector3(0.9, 0.12, 0.3), _m(Color("b07a4a")), Vector3(0.0, 0.34, -0.7))
-	_mast(0.45, 1.05)
-	_prism(Vector3(0.75, 0.9, 0.04), _m(sail, 0.0, 0.015), Vector3(0.0, 0.88, 0.07), Vector3(0.0, PI * 0.5, 0.0), 0.0)
-	_box(Vector3(0.03, 0.03, 0.8), _m(Color("7a5236")), Vector3(0.0, 0.43, 0.05))
-	_captain(Vector3(0.0, 0.3, -0.62), hat, sail)
-
-
-func _tug(paint: Color, sail: Color, hat: String) -> void:
-	_hull(2.3, 1.4, 0.45, 0.18, paint, Color("4b4f5c"), Color("1e1b2e"))
-	var glass := _m(Color("9fe3ff"), 0.5, 0.0)
-	_box(Vector3(0.85, 0.55, 0.7), _m(Color("f7f7f2")), Vector3(0.0, 0.58, -0.35))
-	_box(Vector3(0.98, 0.09, 0.84), _m(sail), Vector3(0.0, 0.9, -0.35))
-	for sx in [-1.0, 1.0]:
-		_cyl(0.08, 0.08, 0.02, glass, Vector3(sx * 0.43, 0.65, -0.35), Vector3(0.0, 0.0, PI * 0.5), 12)
-	_box(Vector3(0.6, 0.18, 0.02), glass, Vector3(0.0, 0.68, 0.01))
-	var chim := _cyl(0.13, 0.15, 0.45, _m(Color("2a2a33")), Vector3(0.0, 1.15, -0.62))
-	_cyl(0.155, 0.155, 0.1, _m(sail, 0.0, 0.0), Vector3(0.0, 0.12, 0.0), Vector3.ZERO, 12, chim)
-	for sx in [-1.0, 1.0]:
-		for zz in [-0.5, 0.25]:
-			_torus(0.07, 0.15, _m(Color("1e1b2e")), Vector3(sx * 0.7, 0.16, zz), Vector3(0.0, 0.0, PI * 0.5))
-	_cyl(0.025, 0.025, 0.5, _m(Color("7a5236")), Vector3(0.0, 0.55, -0.98))
-	_flag_at(Vector3(0.0, 0.72, -0.98))
-	_captain(Vector3(0.0, 0.3, 0.52), hat, sail)
-	smoke = CPUParticles3D.new()
-	smoke.position = Vector3(0.0, 1.4, -0.62)
-	smoke.amount = 14
-	smoke.lifetime = 1.6
-	smoke.local_coords = false
-	smoke.direction = Vector3(0.0, 1.0, -0.4)
-	smoke.spread = 15.0
-	smoke.initial_velocity_min = 0.6
-	smoke.initial_velocity_max = 1.0
-	smoke.gravity = Vector3(0.0, 0.3, 0.0)
-	smoke.scale_amount_curve = _curve(0.4, 1.8)
-	smoke.color_ramp = _fade(Color(0.9, 0.9, 0.95, 0.75), Color(0.9, 0.9, 0.95, 0.0))
+## Rear engine: glowing nozzle + plasma exhaust particles.
+func _thruster(pos: Vector3, radius: float, glow_col: Color) -> void:
+	_cyl(radius, radius * 1.15, 0.3, _m(Color("3a3f5a")), pos, Vector3(PI * 0.5, 0.0, 0.0), 12)
+	_cyl(radius * 0.75, radius * 0.75, 0.02, _m(glow_col, 3.5, 0.0), pos + Vector3(0.0, 0.0, -0.16), Vector3(PI * 0.5, 0.0, 0.0), 12)
+	var p := CPUParticles3D.new()
+	p.position = pos + Vector3(0.0, 0.0, -0.2)
+	p.amount = 18
+	p.lifetime = 0.35
+	p.local_coords = false
+	p.direction = Vector3(0.0, 0.0, -1.0)
+	p.spread = 8.0
+	p.initial_velocity_min = 3.0
+	p.initial_velocity_max = 4.5
+	p.gravity = Vector3.ZERO
+	p.scale_amount_curve = _curve(1.0, 0.1)
+	p.color_ramp = _fade(Color(glow_col.lightened(0.4), 0.95), Color(glow_col, 0.0))
 	var puff := SphereMesh.new()
-	puff.radius = 0.15
-	puff.height = 0.3
+	puff.radius = radius * 0.6
+	puff.height = radius * 1.2
 	puff.radial_segments = 8
 	puff.rings = 4
-	smoke.mesh = puff
-	smoke.material_override = _fx_mat(Color.WHITE)
-	model.add_child(smoke)
+	p.mesh = puff
+	p.material_override = _fx_mat(Color.WHITE)
+	model.add_child(p)
+	thrusters.append(p)
 
 
-func _speedster(paint: Color, sail: Color, hat: String) -> void:
-	_hull(2.6, 1.1, 0.32, 0.12, paint, Color("2b2f5a"), Color("f7f7f2"))
-	_prism(Vector3(0.85, 0.32, 0.45), _m(Color("1b2a4a"), 0.0, 0.015), Vector3(0.0, 0.42, 0.3), Vector3(-PI * 0.5, 0.0, 0.0))
-	_box(Vector3(0.7, 0.14, 0.6), _m(Color("f7f7f2")), Vector3(0.0, 0.36, -0.5))
-	_box(Vector3(0.95, 0.05, 0.24), _m(sail), Vector3(0.0, 0.62, -1.02))
+## Soft glow under the hull: it "hovers" on the river.
+func _hover_glow(width: float, length: float, col: Color) -> void:
+	var disc := CylinderMesh.new()
+	disc.top_radius = 0.5
+	disc.bottom_radius = 0.5
+	disc.height = 0.02
+	disc.radial_segments = 24
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.albedo_color = Color(col, 0.35)
+	m.emission_enabled = true
+	m.emission = col
+	var mi := _add(disc, m, Vector3(0.0, -0.02, 0.0))
+	mi.scale = Vector3(width * 1.3, 1.0, length * 1.15)
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+
+# ------------------------------------------------------------------ hulls (paint = body, sail = glow accent)
+
+func _dinghy(paint: Color, sail: Color, hat: String) -> void:   # SKIMMER
+	_hull(2.4, 1.15, 0.32, 0.14, paint, Color("2b2f5a"), sail)
+	_hover_glow(1.15, 2.4, sail)
+	_prism(Vector3(0.9, 0.25, 0.5), _m(Color("1b2a4a"), 0.0, 0.015), Vector3(0.0, 0.38, 0.55), Vector3(-PI * 0.5, 0.0, 0.0))
 	for sx in [-1.0, 1.0]:
-		_box(Vector3(0.05, 0.3, 0.22), _m(sail), Vector3(sx * 0.44, 0.48, -1.02))
-		_box(Vector3(0.05, 0.06, 1.7), _m(sail, 0.0, 0.0), Vector3(sx * 0.56, 0.2, -0.1))
-	_cyl(0.02, 0.02, 0.36, _m(Color("cccccc")), Vector3(0.0, 0.8, -1.02))
-	_flag_at(Vector3(0.0, 0.92, -1.02))
-	_captain(Vector3(0.0, 0.26, -0.18), hat, sail, true)
+		_prism(Vector3(0.05, 0.5, 0.55), _m(paint.darkened(0.15)), Vector3(sx * 0.42, 0.52, -0.95), Vector3(0.0, 0.0, -sx * 0.2), 0.0)
+		_box(Vector3(0.06, 0.04, 0.5), _m(sail, 2.4, 0.0), Vector3(sx * 0.45, 0.76, -1.0))
+	_thruster(Vector3(0.0, 0.25, -1.15), 0.18, sail)
+	_antenna(Vector3(0.35, 0.3, -0.75), 0.9)
+	_captain(Vector3(0.0, 0.26, -0.2), hat, sail, true)
 
 
-func _junk(paint: Color, sail: Color, hat: String) -> void:
-	_hull(2.4, 1.32, 0.42, 0.4, paint, Color("e3c48f"), paint.darkened(0.35))
-	_mast(0.25, 1.1)
-	var batten := _m(Color("3a1a10"), 0.0, 0.0)
-	for k in 5:
-		var y := 0.52 + k * 0.17
-		var w := 0.72 - k * 0.07
-		_box(Vector3(0.04, 0.15, w), _m(sail, 0.0, 0.012), Vector3(0.0, y, 0.25 - w * 0.5 + 0.04))
-		_box(Vector3(0.05, 0.022, w + 0.04), batten, Vector3(0.0, y + 0.085, 0.25 - w * 0.5 + 0.04))
+func _tug(paint: Color, sail: Color, hat: String) -> void:   # HAULER
+	_hull(2.3, 1.4, 0.42, 0.12, paint, Color("3a3f5a"), sail)
+	_hover_glow(1.4, 2.3, sail)
+	_box(Vector3(0.95, 0.5, 0.75), _m(paint.lightened(0.15)), Vector3(0.0, 0.55, 0.3))
+	_box(Vector3(0.97, 0.16, 0.6), _m(sail, 1.6, 0.0), Vector3(0.0, 0.66, 0.36))
+	_box(Vector3(1.0, 0.06, 0.8), _m(Color("2b2f5a")), Vector3(0.0, 0.83, 0.3))
+	for k in 2:
+		_box(Vector3(0.5, 0.35, 0.42), _m([Color("ff8a3d"), Color("3ddc97")][k], 0.0, 0.02), Vector3((k - 0.5) * 0.55, 0.47, -0.6))
 	for sx in [-1.0, 1.0]:
-		_sphere(0.1, _m(Color("ff6a3a"), 2.5, 0.015), Vector3(sx * 0.48, 0.62, -0.95), Vector3(1.0, 1.3, 1.0))
-		_cyl(0.015, 0.015, 0.22, _m(Color("3a1a10")), Vector3(sx * 0.48, 0.47, -0.95))
+		_thruster(Vector3(sx * 0.4, 0.28, -1.05), 0.16, sail)
+	_antenna(Vector3(0.0, 0.86, 0.3), 0.55)
+	_captain(Vector3(0.0, 0.3, -0.12), hat, sail)
+
+
+func _speedster(paint: Color, sail: Color, hat: String) -> void:   # INTERCEPTOR
+	_hull(2.7, 1.0, 0.28, 0.1, paint, Color("1b2040"), sail)
+	_hover_glow(1.6, 2.7, sail)
+	for sx in [-1.0, 1.0]:
+		_box(Vector3(0.75, 0.05, 1.0), _m(paint.darkened(0.1)), Vector3(sx * 0.62, 0.22, -0.55), Vector3(0.0, sx * 0.25, -sx * 0.12))
+		_box(Vector3(0.7, 0.03, 0.06), _m(sail, 2.4, 0.0), Vector3(sx * 0.66, 0.26, -1.04), Vector3(0.0, sx * 0.25, -sx * 0.12))
+		_thruster(Vector3(sx * 0.3, 0.26, -1.25), 0.15, sail)
+	_box(Vector3(0.9, 0.05, 0.22), _m(paint.darkened(0.25)), Vector3(0.0, 0.62, -1.15))
+	for sx in [-1.0, 1.0]:
+		_box(Vector3(0.05, 0.3, 0.2), _m(paint.darkened(0.25)), Vector3(sx * 0.4, 0.47, -1.15))
+	_sphere(0.32, _m(Color(0.5, 0.85, 1.0), 0.6, 0.015), Vector3(0.0, 0.42, 0.05), Vector3(1.0, 0.75, 1.6))
+	_antenna(Vector3(0.0, 0.64, -1.15), 0.5)
+	_captain(Vector3(0.0, 0.24, -0.05), hat, sail, true)
+
+
+func _junk(paint: Color, sail: Color, hat: String) -> void:   # SOLAR SAIL
+	_hull(2.4, 1.25, 0.38, 0.3, paint, Color("2b2f5a"), sail)
+	_hover_glow(1.25, 2.4, sail)
+	_cyl(0.05, 0.04, 1.15, _m(Color("c0c8dc")), Vector3(0.0, 0.88, 0.25), Vector3.ZERO, 8)
+	var frame := _m(sail, 1.6, 0.0)
+	var cell := _m(Color("1b2a5a"), 0.25, 0.0)
+	for row in 3:
+		for col in 2:
+			var y := 0.6 + row * 0.27
+			var z := 0.25 - 0.08 - col * 0.32
+			_box(Vector3(0.04, 0.24, 0.3), cell, Vector3(0.0, y, z))
+	_box(Vector3(0.05, 0.84, 0.03), frame, Vector3(0.0, 0.87, 0.25 - 0.71))
+	_box(Vector3(0.05, 0.03, 0.66), frame, Vector3(0.0, 1.29, 0.25 - 0.4))
+	_box(Vector3(0.05, 0.03, 0.66), frame, Vector3(0.0, 0.45, 0.25 - 0.4))
+	_thruster(Vector3(0.0, 0.3, -1.1), 0.17, sail)
+	_flag_at(Vector3(0.0, 1.38, 0.25))
 	_captain(Vector3(0.0, 0.3, -0.72), hat, sail)
 
 
-func _duck(paint: Color, sail: Color, hat: String) -> void:
+func _duck(paint: Color, sail: Color, hat: String) -> void:   # ROBO DUCK
 	var body := _m(paint)
-	_sphere(0.64, body, Vector3(0.0, 0.18, -0.1), Vector3(1.0, 0.72, 1.45))
-	_sphere(0.3, body, Vector3(0.0, 0.4, -0.95), Vector3(1.0, 0.8, 0.8))
-	_sphere(0.4, body, Vector3(0.0, 0.85, 0.62))
-	_prism(Vector3(0.38, 0.28, 0.15), _m(Color("ff8a1f")), Vector3(0.0, 0.79, 1.08), Vector3(PI * 0.5, 0.0, 0.0))
+	var metal := _m(Color("c0c8dc"))
+	_hover_glow(1.2, 2.0, sail)
+	_sphere(0.62, body, Vector3(0.0, 0.2, -0.1), Vector3(1.0, 0.72, 1.45))
+	_sphere(0.28, body, Vector3(0.0, 0.42, -0.95), Vector3(1.0, 0.8, 0.8))
+	_sphere(0.4, body, Vector3(0.0, 0.86, 0.62))
+	_prism(Vector3(0.38, 0.28, 0.15), metal, Vector3(0.0, 0.8, 1.08), Vector3(PI * 0.5, 0.0, 0.0))
+	_box(Vector3(0.5, 0.12, 0.1), _m(sail, 2.6, 0.0), Vector3(0.0, 0.98, 0.98))
+	_cyl(0.015, 0.015, 0.16, metal, Vector3(0.15, 1.3, 0.55), Vector3.ZERO, 6)
+	_sphere(0.05, _m(Color("ff3d5a"), 3.0, 0.0), Vector3(0.15, 1.4, 0.55))
 	for sx in [-1.0, 1.0]:
-		_sphere(0.1, _m(Color("ffffff")), Vector3(sx * 0.19, 0.98, 0.93))
-		_sphere(0.055, _m(Color("15122b"), 0.0, 0.0), Vector3(sx * 0.2, 0.99, 1.01))
-		_sphere(0.24, _m(paint.darkened(0.12)), Vector3(sx * 0.5, 0.36, -0.15), Vector3(0.4, 0.7, 1.1))
-	_cyl(0.6, 0.6, 0.05, _m(sail, 0.0, 0.0), Vector3(0.0, 0.05, -0.1), Vector3.ZERO, 24)
-	_cyl(0.02, 0.02, 0.45, _m(Color("7a5236")), Vector3(0.0, 0.62, -1.05))
-	_flag_at(Vector3(0.0, 0.78, -1.05))
+		_sphere(0.24, _m(paint.darkened(0.12)), Vector3(sx * 0.5, 0.38, -0.15), Vector3(0.4, 0.7, 1.1))
+		_thruster(Vector3(sx * 0.25, 0.35, -1.12), 0.12, sail)
+	_antenna(Vector3(0.0, 0.62, -1.05), 0.4)
 	_captain(Vector3(0.0, 0.52, -0.32), hat, sail, true)
 
 
-func _skiff(paint: Color, sail: Color, hat: String) -> void:
+func _skiff(paint: Color, sail: Color, hat: String) -> void:   # MOON SKIFF
 	_hull(2.5, 1.12, 0.36, 0.32, paint, Color("2d336b"), sail)
+	_hover_glow(1.12, 2.5, sail)
 	for sx in [-1.0, 1.0]:
 		_box(Vector3(0.04, 0.04, 2.0), _m(sail, 2.2, 0.0), Vector3(sx * 0.58, 0.31, 0.0))
 	_cyl(0.04, 0.03, 0.7, _m(Color("c0c8ff")), Vector3(0.0, 0.65, 0.3))
@@ -454,8 +505,8 @@ func _skiff(paint: Color, sail: Color, hat: String) -> void:
 	_torus(0.28, 0.38, _m(sail, 2.4, 0.012), Vector3.ZERO, Vector3(0.0, 0.0, PI * 0.5), halo)
 	_sphere(0.15, _m(Color("fff3d6"), 2.5, 0.012), Vector3.ZERO, Vector3.ONE, halo)
 	spin_parts.append(halo)
-	_cyl(0.02, 0.02, 0.4, _m(Color("c0c8ff")), Vector3(0.0, 0.5, -1.05))
-	_flag_at(Vector3(0.0, 0.66, -1.05))
+	_thruster(Vector3(0.0, 0.28, -1.15), 0.16, sail)
+	_antenna(Vector3(0.0, 0.3, -1.05), 0.4)
 	_captain(Vector3(0.0, 0.3, -0.55), hat, sail)
 
 

@@ -10,6 +10,7 @@ const POOL := [
 	{"id": "stars3", "text": "Get 3 stars on %s levels", "targets": [1, 2, 3], "reward": [250, 400, 600]},
 	{"id": "races", "text": "Finish %s races", "targets": [1, 2, 3], "reward": [200, 300, 450]},
 	{"id": "race_win", "text": "Win %s race", "targets": [1, 1, 2], "reward": [400, 400, 700]},
+	{"id": "endless", "text": "Score %s total in Endless", "targets": [300, 600, 1000], "reward": [200, 350, 600]},
 ]
 const ALL_DONE_BONUS := 500
 

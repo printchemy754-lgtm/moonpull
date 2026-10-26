@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "119472612480",
+    "project_id": "moonpull-d6076",
+    "storage_bucket": "moonpull-d6076.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:119472612480:android:e1551b68e600addf827265",
+        "android_client_info": {
+          "package_name": "com.streamlet.moonpull"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyANfaQ6tKuDUl-aysJN3KNVt79oOGgEL1w"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

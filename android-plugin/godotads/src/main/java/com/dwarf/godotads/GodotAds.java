@@ -170,6 +170,62 @@ public class GodotAds extends GodotPlugin {
         });
     }
 
+    // ------------------------------------------------------------------ analytics (Firebase)
+
+    /** Logs a Firebase Analytics event. Values: int/long, float/double or text. */
+    @UsedByGodot
+    public void logEvent(String name, org.godotengine.godot.Dictionary params) {
+        final Activity activity = getActivity();
+        if (activity == null) {
+            return;
+        }
+        try {
+            android.os.Bundle bundle = new android.os.Bundle();
+            if (params != null) {
+                for (String key : params.keySet()) {
+                    Object v = params.get(key);
+                    if (v instanceof Integer || v instanceof Long) {
+                        bundle.putLong(key, ((Number) v).longValue());
+                    } else if (v instanceof Float || v instanceof Double) {
+                        bundle.putDouble(key, ((Number) v).doubleValue());
+                    } else if (v != null) {
+                        bundle.putString(key, String.valueOf(v));
+                    }
+                }
+            }
+            com.google.firebase.analytics.FirebaseAnalytics.getInstance(activity).logEvent(name, bundle);
+        } catch (Throwable t) {
+            Log.w(TAG, "Analytics: " + t.getMessage());
+        }
+    }
+
+    @UsedByGodot
+    public void setUserProperty(String name, String value) {
+        final Activity activity = getActivity();
+        if (activity == null) {
+            return;
+        }
+        try {
+            com.google.firebase.analytics.FirebaseAnalytics.getInstance(activity).setUserProperty(name, value);
+        } catch (Throwable t) {
+            Log.w(TAG, "Analytics: " + t.getMessage());
+        }
+    }
+
+    @UsedByGodot
+    public void shareText(final String text) {
+        final Activity activity = getActivity();
+        if (activity == null) {
+            return;
+        }
+        activity.runOnUiThread(() -> {
+            android.content.Intent send = new android.content.Intent(android.content.Intent.ACTION_SEND);
+            send.setType("text/plain");
+            send.putExtra(android.content.Intent.EXTRA_TEXT, text);
+            activity.startActivity(android.content.Intent.createChooser(send, null));
+        });
+    }
+
     @UsedByGodot
     public boolean isPrivacyOptionsRequired() {
         final Activity activity = getActivity();

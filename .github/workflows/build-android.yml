@@ -1,4 +1,4 @@
-name: Build (APK + AAB + Web)
+name: Build (APK + AAB + IPA + Web)
 
 on:
   push:
@@ -236,6 +236,76 @@ jobs:
             exit 1
           fi
           grep "AUTOTEST PASSED" autotest.log
+
+  # iPhone: unsigned IPA built on GitHub's Mac servers (no Mac / Apple account needed).
+  # Install it with a sideloading tool, or add signing later for TestFlight / App Store.
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download Godot (macOS) + export templates
+        run: |
+          set -e
+          V="${GODOT_VERSION}"
+          BASE="https://github.com/godotengine/godot/releases/download/${V}-stable"
+          curl -sSL -o godot.zip "$BASE/Godot_v${V}-stable_macos.universal.zip"
+          unzip -q godot.zip
+          echo "GODOT=$PWD/Godot.app/Contents/MacOS/Godot" >> "$GITHUB_ENV"
+          curl -sSL -o tpl.tpz "$BASE/Godot_v${V}-stable_export_templates.tpz"
+          TPL="$HOME/Library/Application Support/Godot/export_templates/${V}.stable"
+          mkdir -p "$TPL" /tmp/tpl
+          unzip -q tpl.tpz -d /tmp/tpl
+          mv /tmp/tpl/templates/* "$TPL/"
+          rm -f godot.zip tpl.tpz
+
+      - name: Export Xcode project
+        run: |
+          set -e
+          "$GODOT" --headless --path game --import > /dev/null 2>&1 || true
+          "$GODOT" --headless --path game --import > /dev/null 2>&1 || true
+          mkdir -p "$GITHUB_WORKSPACE/out/ios"
+          set +e
+          "$GODOT" --headless --verbose --path game --export-release "iOS" "$GITHUB_WORKSPACE/out/ios/moonpull.ipa" > export.log 2>&1
+          set -e
+          ls -la "$GITHUB_WORKSPACE/out/ios" || true
+          if [ ! -d "$GITHUB_WORKSPACE/out/ios/moonpull.xcodeproj" ]; then
+            {
+              echo "## iOS export failed"
+              echo '```'
+              grep -iE "error|missing|requires|invalid|not found" export.log | tail -n 40
+              echo '--- last lines ---'
+              tail -n 40 export.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            grep -iE "error|missing|requires|invalid" export.log | tail -n 8 | while read -r l; do echo "::error::$l"; done
+            exit 1
+          fi
+
+      - name: Build unsigned IPA
+        run: |
+          set -e
+          cd out/ios
+          SCHEME=$(xcodebuild -list -project moonpull.xcodeproj -json | python3 -c "import json,sys; print(json.load(sys.stdin)['project']['schemes'][0])")
+          echo "Scheme: $SCHEME"
+          xcodebuild -project moonpull.xcodeproj -scheme "$SCHEME" -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -archivePath build/moonpull.xcarchive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" \
+            archive > xcodebuild.log 2>&1 || {
+              { echo "## xcodebuild failed"; echo '```'; grep -E "error:" xcodebuild.log | head -n 30; tail -n 30 xcodebuild.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+              grep -E "error:" xcodebuild.log | head -n 8 | while read -r l; do echo "::error::$l"; done
+              exit 1; }
+          mkdir -p Payload
+          cp -R build/moonpull.xcarchive/Products/Applications/*.app Payload/
+          zip -qry "$GITHUB_WORKSPACE/out/moonpull-unsigned.ipa" Payload
+          ls -la "$GITHUB_WORKSPACE/out"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: moonpull-ios-${{ github.run_number }}
+          path: out/moonpull-unsigned.ipa
+          if-no-files-found: error
 
   # Browser version of the game -> GitHub Pages (play-test on any phone/PC, no install).
   web:

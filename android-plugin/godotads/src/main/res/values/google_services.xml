@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Firebase config (generated from android-plugin/google-services.json by hand,
+     so the Godot build doesn't need the google-services Gradle plugin). -->
+<resources>
+    <string name="google_app_id" translatable="false">1:119472612480:android:e1551b68e600addf827265</string>
+    <string name="gcm_defaultSenderId" translatable="false">119472612480</string>
+    <string name="google_api_key" translatable="false">AIzaSyANfaQ6tKuDUl-aysJN3KNVt79oOGgEL1w</string>
+    <string name="google_crash_reporting_api_key" translatable="false">AIzaSyANfaQ6tKuDUl-aysJN3KNVt79oOGgEL1w</string>
+    <string name="project_id" translatable="false">moonpull-d6076</string>
+    <string name="google_storage_bucket" translatable="false">moonpull-d6076.firebasestorage.app</string>
+</resources>

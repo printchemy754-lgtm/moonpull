@@ -85,7 +85,29 @@ static func safe_range(e: Dictionary, t: float) -> Vector2:
 
 # ------------------------------------------------------------------ generation
 
-static func generate(level: int, seed_override := -1) -> Dictionary:
+## Endless mode: difficulty rises with distance (level-equivalent per segment).
+const ENDLESS_SEGMENTS := 400
+
+
+static func endless_level(segment: int) -> int:
+	return clampi(2 + int(segment * 0.35), 2, 30)
+
+
+static func generate_endless(seed_value: int) -> Dictionary:
+	return generate(2, seed_value, true)
+
+
+## For endless data: the level-equivalent at distance z.
+static func ramp_level(data: Dictionary, z: float) -> int:
+	var lv := 2
+	for r in data.get("ramp", []):
+		if float(r[0]) > z:
+			break
+		lv = int(r[1])
+	return lv
+
+
+static func generate(level: int, seed_override := -1, endless := false) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = level * 7919 + 1234 if seed_override < 0 else seed_override
 	var speed := speed_for(level)
@@ -94,7 +116,8 @@ static func generate(level: int, seed_override := -1) -> Dictionary:
 	var reaction := maxf(0.95 - (level - 1) * 0.025, 0.5)
 	var window := maxf(1.8 - (level - 1) * 0.06, 0.85)
 	var weights := _patterns_for(level)
-	var segments := mini(5 + level, 18)
+	var segments := mini(5 + level, 18) if not endless else ENDLESS_SEGMENTS
+	var ramp: Array = []
 
 	var items: Array[Dictionary] = []
 	var pearls: Array[Vector3] = []
@@ -108,6 +131,16 @@ static func generate(level: int, seed_override := -1) -> Dictionary:
 		queue = ["boost"]
 
 	for s in segments:
+		if endless:
+			var lv := endless_level(s)
+			if ramp.is_empty() or int(ramp[-1][1]) != lv:
+				ramp.append([z, lv])
+				speed = speed_for(lv)
+				rise = rise_for(lv)
+				fall = fall_for(lv)
+				reaction = maxf(0.95 - (lv - 1) * 0.025, 0.5)
+				window = maxf(1.8 - (lv - 1) * 0.06, 0.85)
+				weights = _patterns_for(lv)
 		var pat: String = queue.pop_front() if not queue.is_empty() else _pick(weights, rng)
 		for spec in _make_pattern(pat, window, rng):
 			var nat: float = spec.nat
@@ -134,6 +167,11 @@ static func generate(level: int, seed_override := -1) -> Dictionary:
 				before.append(nat)
 
 	var finish := z + speed * 3.0 + 10.0
+	if endless:
+		return {
+			"items": items, "pearls": pearls, "finish": finish, "endless": true, "ramp": ramp,
+			"speed": speed_for(2), "rise": rise_for(2), "fall": fall_for(2),
+		}
 	return {
 		"items": items, "pearls": pearls, "finish": finish,
 		"speed": speed, "rise": rise, "fall": fall,

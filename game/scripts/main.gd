@@ -48,6 +48,8 @@ var shake := 0.0
 var pending_reward := ""
 var shop_index := 0
 var shop_cat := "hull"
+var shop_slot := "hull"
+var run_xp := 0
 var cam_mode := "menu"
 var cam_pos := Vector3.ZERO
 var cam_look := Vector3.ZERO
@@ -82,6 +84,8 @@ var at_crashes := 0
 var at_level_crashes := 0
 var at_paused := false
 var at_raced := false
+var at_endless := false
+var endless_level := 2
 const AT_LEVELS := 14
 
 
@@ -106,6 +110,14 @@ func _ready() -> void:
 	ui.shop_back.connect(_on_shop_back)
 	ui.shop_tab.connect(_on_shop_tab)
 	ui.shop_pick.connect(_on_shop_pick)
+	ui.shop_side.connect(func(slot: String):
+		shop_slot = slot
+		shop_index = Save.equipped(slot)
+		_refresh_shop())
+	ui.rank_closed.connect(_next_rank_up)
+	ui.endless_pressed.connect(_start_endless)
+	ui.share_pressed.connect(_on_share)
+	ui.mystery_open.connect(_on_mystery)
 	ui.shop_action.connect(_on_shop_action)
 	ui.free_pressed.connect(_on_free)
 	ui.daily_claim.connect(_on_daily_claim)
@@ -199,6 +211,7 @@ func _start_run() -> void:
 	state = State.PLAYING
 	cam_mode = "chase"
 	ui.show_hud(level)
+	Analytics.event("level_start", {"level_name": "level_%d" % level, "level": level})
 
 
 # =============================================================== loop
@@ -238,6 +251,9 @@ func _process(delta: float) -> void:
 			if boat_z >= world.finish_z and state == State.PLAYING:
 				if mode == "levels":
 					_win()
+				elif mode == "endless":
+					continue_used = true
+					_crash(0)
 				else:
 					_race_finish()
 		State.COUNTDOWN:
@@ -252,8 +268,16 @@ func _process(delta: float) -> void:
 			water_vel = 0.0
 			water_y = lerpf(water_y, LevelGen.WATER_REST + 0.6, 1.0 - exp(-2.0 * delta))
 
-	if mode != "levels":
+	if mode == "race_ai" or mode == "race_lan":
 		_race_tick(delta)
+	elif mode == "endless" and (state == State.PLAYING or state == State.COUNTDOWN):
+		var lv := LevelGen.ramp_level(data, boat_z)
+		if lv != endless_level:
+			endless_level = lv
+			speed = LevelGen.speed_for(lv)
+			rise = LevelGen.rise_for(lv)
+			fall = LevelGen.fall_for(lv)
+		ui.set_score(_endless_score())
 	boat.position = Vector3(0.0, water_y, boat_z)
 	boat.tick(delta, t, water_vel, factor, state != State.DEAD, holding and (state == State.PLAYING or state == State.COUNTDOWN))
 	world.update(delta, run_t, t, water_y, boat_z, holding and state == State.PLAYING)
@@ -312,6 +336,11 @@ func _update_camera(delta: float) -> void:
 			pos = bp + Vector3(sin(a2) * 3.6, 1.5, cos(a2) * 3.6)
 			look = bp + Vector3(0.0, -0.75, 0.0)
 			fov = 58.0
+			rate = 4.0
+		"shop_walls":
+			pos = bp + Vector3(0.0, 4.2, -6.5)
+			look = bp + Vector3(0.0, 1.8, 9.0)
+			fov = 70.0
 			rate = 4.0
 		"win":
 			pos = bp + Vector3(5.2, 2.8, 2.5)
@@ -395,6 +424,7 @@ func _collect(p: Dictionary) -> void:
 	var value := COIN_VALUE * (2 if boost_left > 0.0 else 1)
 	run_coins += value
 	mission_coins += value
+	run_xp += Ranks.XP_PICKUP
 	pearls_got += 1
 	streak = mini(streak + 1, 10)
 	streak_timer = 1.4
@@ -459,15 +489,20 @@ func _crash(i: int) -> void:
 	world.burst_splash(boat.global_position + Vector3(0.0, 0.4, 0.9))
 	boat.crash()
 	ui.hide_hint()
-	if mode != "levels":
+	if mode == "race_ai" or mode == "race_lan":
 		await get_tree().create_timer(1.1).timeout
-		if state == State.DEAD and mode != "levels":
+		if state == State.DEAD and (mode == "race_ai" or mode == "race_lan"):
 			_race_respawn()
 		return
 	await get_tree().create_timer(0.75).timeout
 	if state == State.DEAD:
 		_bank()
+		if mode == "endless":
+			_endless_over()
+			return
 		ui.set_coins(Save.coins)
+		Analytics.event("level_end", {"level_name": "level_%d" % level, "success": 0, "level": level,
+			"progress": int(clampf(boat_z / world.finish_z, 0.0, 1.0) * 100.0), "obstacle": String(world.items[crash_index].kind)})
 		ui.show_lose(not continue_used, clampf(boat_z / world.finish_z, 0.0, 1.0), run_coins)
 
 
@@ -489,8 +524,12 @@ func _win() -> void:
 	Sfx.play("win")
 	Sfx.vibrate(40)
 	_bank()
+	Analytics.event("level_end", {"level_name": "level_%d" % level, "success": 1, "level": level, "stars": stars, "coins": run_coins, "seconds": int(run_t)})
+	if level == 2:
+		Analytics.event("tutorial_complete")
 	Save.set_stars(level, stars)
 	Save.set_level(level + 1)
+	Save.add_xp(Ranks.XP_WIN + stars * Ranks.XP_STAR)
 	_mission("levels")
 	if stars == 3:
 		_mission("stars3")
@@ -534,7 +573,7 @@ func _revive() -> void:
 	boat.reset_pose()
 	state = State.COUNTDOWN
 	countdown_left = 2.0
-	ui.show_hud(level)
+	_show_run_hud()
 	ui.set_countdown(2)
 
 
@@ -594,7 +633,8 @@ func _setup_run(new_data: Dictionary, theme_level: int) -> void:
 	speed = data.speed
 	rise = data.rise
 	fall = data.fall
-	world.build_level(data, theme_level)
+	var ws := _wall_styles(Save.equipped("wall_l"), Save.equipped("wall_r"))
+	world.build_level(data, theme_level, ws[0], ws[1])
 	pearls_total = world.pearls.size()
 	run_coins = 0
 	banked = 0
@@ -626,6 +666,8 @@ func _show_menu() -> void:
 	ui.show_menu(level, Save.coins, th.name, Themes.world_index(level) + 1, Themes.step_in_world(level), Save.total_stars())
 	_update_free_button()
 	_refresh_menu_buttons()
+	_check_rank_ups()
+	ui.set_endless_best(Save.best_endless)
 	if first_menu:
 		first_menu = false
 		if Save.daily_available() and not autotest:
@@ -640,6 +682,7 @@ func _transition_to_level() -> void:
 
 func _maybe_interstitial() -> void:
 	if Ads.round_ended_should_show(level):
+		Analytics.event("ad_interstitial", {"level": level})
 		ui.block(true)
 		Ads.show_interstitial()
 		await Ads.interstitial_closed
@@ -650,6 +693,9 @@ func _on_retry() -> void:
 	if state == State.PAUSED or state == State.DEAD or state == State.PLAYING:
 		state = State.DEAD
 	await _maybe_interstitial()
+	if mode == "endless":
+		await _restart_endless()
+		return
 	await _transition_to_level()
 
 
@@ -675,7 +721,7 @@ func _on_pause() -> void:
 func _on_resume() -> void:
 	if state != State.PAUSED:
 		return
-	ui.show_hud(level)
+	_show_run_hud()
 	ui.set_progress(clampf(boat_z / world.finish_z, 0.0, 1.0))
 	state = State.COUNTDOWN
 	countdown_left = 1.5
@@ -698,6 +744,9 @@ func _bank() -> void:
 	if mission_coins > 0:
 		_mission("coins", mission_coins)
 		mission_coins = 0
+	if run_xp > 0:
+		Save.add_xp(run_xp)
+		run_xp = 0
 
 
 func _mission(id: String, amount := 1) -> void:
@@ -743,10 +792,13 @@ func _on_daily_claim(mult: int) -> void:
 
 func _give_daily(mult: int) -> void:
 	var amount := Save.claim_daily(mult)
+	Analytics.event("daily_gift", {"day": Save.daily_streak, "doubled": 1 if mult > 1 else 0})
 	ui.hide_daily()
 	ui.set_coins(Save.coins)
 	ui.bump_coins()
 	ui.popup("+%s COINS" % GameUI.fmt(amount))
+	if not Save.last_daily_item.is_empty():
+		ui.show_reveal({"cat": Save.last_daily_item[0], "index": Save.last_daily_item[1]})
 	world.burst_confetti(boat.global_position + Vector3(0.0, 2.0, 0.0))
 	Sfx.play("buy")
 
@@ -762,6 +814,7 @@ func _on_rewarded_finished(earned: bool) -> void:
 	ui.block(false)
 	var what := pending_reward
 	pending_reward = ""
+	Analytics.event("ad_rewarded", {"placement": what, "earned": 1 if earned else 0})
 	match what:
 		"continue":
 			if earned and state == State.DEAD:
@@ -803,6 +856,8 @@ func _on_rewarded_finished(earned: bool) -> void:
 
 func _refresh_menu_buttons() -> void:
 	ui.refresh_menu_buttons(Save.player_name, Missions.claimable(), Save.chest_seconds_left(), Save.star_chest_ready())
+	var r := Ranks.from_xp(Save.xp)
+	ui.set_rank(r[0], r[1], r[2], Ranks.title(r[0]))
 
 
 func _show_tasks() -> void:
@@ -812,9 +867,11 @@ func _show_tasks() -> void:
 func _on_task_claim(i: int) -> void:
 	var amount := Missions.claim(i)
 	if amount > 0:
+		Save.add_xp(Ranks.XP_TASK)
 		_reward_fx(amount)
 	_show_tasks()
 	_refresh_menu_buttons()
+	_check_rank_ups()
 
 
 func _on_task_bonus() -> void:
@@ -843,12 +900,96 @@ func _on_chest_open(kind: String) -> void:
 	if kind == "star" and not Save.star_chest_ready():
 		return
 	var reward := Save.open_chest(kind)
+	Analytics.event("chest_open", {"kind": kind})
+	Save.add_xp(Ranks.XP_CHEST)
 	ui.set_coins(Save.coins)
 	ui.show_reveal(reward)
 	world.burst_confetti(boat.global_position + Vector3(0.0, 2.0, 0.0))
 	Sfx.play("win")
 	Sfx.vibrate(50)
 	_refresh_menu_buttons()
+
+
+# =============================================================== endless
+
+func _endless_score() -> int:
+	return int(boat_z / 2.0)
+
+
+func _show_run_hud() -> void:
+	if mode == "endless":
+		ui.show_endless_hud(Save.best_endless)
+		ui.set_score(_endless_score())
+	else:
+		ui.show_hud(level)
+
+
+func _start_endless() -> void:
+	if state != State.MENU:
+		return
+	await ui.fade_out(0.25).finished
+	_begin_endless()
+	ui.fade_in()
+
+
+func _restart_endless() -> void:
+	await ui.fade_out(0.25).finished
+	_begin_endless()
+	ui.fade_in()
+
+
+func _begin_endless() -> void:
+	_clear_race()
+	mode = "endless"
+	Analytics.event("endless_start")
+	_setup_run(LevelGen.generate_endless(randi()), Save.level)
+	endless_level = 2
+	cam_mode = "chase"
+	state = State.COUNTDOWN
+	countdown_left = 2.0
+	ui.show_endless_hud(Save.best_endless)
+	ui.set_countdown(2)
+
+
+func _endless_over() -> void:
+	var score := _endless_score()
+	var prev := Save.best_endless
+	var new_best := score > prev
+	if new_best:
+		Save.best_endless = score
+		world.burst_confetti(boat.global_position + Vector3(0.0, 2.5, 2.0))
+		Sfx.play("win")
+	Save.add_xp(score / 4)
+	Missions.track("endless", score)
+	Analytics.event("endless_end", {"score": score, "best": Save.best_endless, "new_best": 1 if new_best else 0, "seconds": int(run_t)})
+	Save.save()
+	ui.set_coins(Save.coins)
+	ui.show_lose_endless(score, prev if new_best else Save.best_endless, new_best, not continue_used, run_coins)
+
+
+func _on_share() -> void:
+	var text := ""
+	if mode == "endless":
+		text = "I scored %d in Moonpull Endless! Can you beat me? %s" % [_endless_score(), Ads.STORE_URL]
+	else:
+		text = "I'm a Rank %d captain on level %d in Moonpull! %s" % [Save.rank(), level, Ads.STORE_URL]
+	Analytics.event("share", {"content_type": mode, "method": "share_sheet"})
+	if not Ads.share_text(text):
+		ui.popup("Copied! Paste it to a friend", Color("8fe3ff"))
+
+
+func _on_mystery() -> void:
+	var got := Save.open_mystery()
+	if got.is_empty():
+		ui.popup("Not enough coins", Color("ff9b8b"))
+		return
+	Analytics.event("spend_virtual_currency", {"item_name": "mystery_box", "virtual_currency_name": "coins", "value": Save.MYSTERY_PRICE})
+	Save.add_xp(Ranks.XP_CHEST)
+	ui.set_coins(Save.coins)
+	ui.show_reveal(got)
+	world.burst_confetti(boat.global_position + Vector3(0.0, 2.0, 0.0))
+	Sfx.play("win")
+	Sfx.vibrate(50)
 
 
 # =============================================================== race
@@ -1029,6 +1170,8 @@ func _race_finish() -> void:
 	_bank()
 	Save.add_coins(race_reward)
 	Save.races += 1
+	Analytics.event("race_end", {"mode": mode, "place": place, "players": rows.size()})
+	Save.add_xp(Ranks.XP_RACE + (Ranks.XP_RACE_WIN if place == 1 else 0))
 	_mission("races")
 	if place == 1:
 		Save.race_wins += 1
@@ -1074,6 +1217,56 @@ func _on_race_done() -> void:
 		_show_lobby()
 
 
+# =============================================================== rank ups
+
+var _showing_rank := false
+
+
+func _check_rank_ups() -> void:
+	if _showing_rank or Save.pending_ranks.is_empty() or state != State.MENU or autotest:
+		if autotest:
+			Save.pending_ranks.clear()
+		return
+	_next_rank_up()
+
+
+func _next_rank_up() -> void:
+	_showing_rank = false
+	_refresh_menu_buttons()
+	if Save.pending_ranks.is_empty() or state != State.MENU:
+		return
+	var r := int(Save.pending_ranks.pop_front())
+	Save.save()
+	Analytics.event("level_up", {"level": r, "character": "captain"})
+	Analytics.user_property("rank", str(r))
+	_showing_rank = true
+	var rw := Ranks.reward(r)
+	var rows: Array = [["coin", Color.WHITE, "+%s COINS" % GameUI.fmt(int(rw.coins))]]
+	for pair in rw.items:
+		var it := Custom.item(pair[0], pair[1])
+		rows.append(["star", Color("ff4f7a"), "%s %s" % [String(it.name), Custom.CAT_NAMES[pair[0]]]])
+	if rw.chest:
+		var got := Save.open_chest("rank")
+		if got.has("coins"):
+			rows.append(["chest", Color("ffd166"), "CHEST: +%s" % GameUI.fmt(int(got.coins))])
+		else:
+			rows.append(["chest", Color("ffd166"), "CHEST: %s" % String(Custom.item(got.cat, int(got.index)).name)])
+	var nx := Ranks.next_exclusive_rank(r)
+	var next_text := ""
+	if nx > 0:
+		var it2: Dictionary = Custom.item(Custom.rank_unlocks(nx)[0][0], Custom.rank_unlocks(nx)[0][1])
+		next_text = "Next exclusive at RANK %d: %s" % [nx, String(it2.name)]
+	ui.show_rank_up(r, Ranks.title(r), rows, next_text)
+	ui.set_coins(Save.coins)
+	world.burst_confetti(boat.global_position + Vector3(0.0, 2.5, 0.0))
+	Sfx.play("win")
+	Sfx.vibrate(60)
+
+
+func _wall_styles(l: int, r: int) -> Array:
+	return [String(Custom.item("wall", l).style), String(Custom.item("wall", r).style)]
+
+
 # =============================================================== shop & settings
 
 func _on_boats() -> void:
@@ -1086,7 +1279,8 @@ func _on_boats() -> void:
 
 func _on_shop_tab(cat: String) -> void:
 	shop_cat = cat
-	shop_index = Save.equipped(cat)
+	shop_slot = cat if cat != "wall" else (shop_slot if shop_slot.begins_with("wall") else "wall_l")
+	shop_index = Save.equipped(shop_slot)
 	_refresh_shop()
 
 
@@ -1098,26 +1292,50 @@ func _on_shop_pick(i: int) -> void:
 ## Preview = what you own/equip, with the selected item tried on.
 func _refresh_shop() -> void:
 	var preview := Save.boat_cfg()
-	preview[shop_cat] = shop_index
+	preview[shop_slot] = shop_index
 	boat.apply(preview)
 	boat.reset_pose()
-	ui.show_shop(shop_cat, shop_index, Save.coins)
+	if shop_cat == "wall":
+		var ws := _wall_styles(int(preview.wall_l), int(preview.wall_r))
+		world.set_walls(ws[0], ws[1])
+		cam_mode = "shop_walls"
+	else:
+		_restore_walls()
+		cam_mode = "shop"
+	ui.show_shop(shop_cat, shop_index, Save.coins, shop_slot)
 	_update_free_button()
+
+
+var _walls_shown := ""
+
+
+func _restore_walls() -> void:
+	var key := "%d/%d" % [Save.equipped("wall_l"), Save.equipped("wall_r")]
+	if key == _walls_shown:
+		return
+	_walls_shown = key
+	var ws := _wall_styles(Save.equipped("wall_l"), Save.equipped("wall_r"))
+	world.set_walls(ws[0], ws[1])
 
 
 func _on_shop_action() -> void:
 	if Save.owns(shop_cat, shop_index):
-		Save.equip(shop_cat, shop_index)
+		Save.equip(shop_slot, shop_index)
 		Sfx.play("click")
-	elif Save.buy(shop_cat, shop_index):
+	elif Save.buy(shop_cat, shop_index, shop_slot):
+		Analytics.event("spend_virtual_currency", {"item_name": "%s:%s" % [shop_cat, String(Custom.item(shop_cat, shop_index).name)],
+			"virtual_currency_name": "coins", "value": int(Custom.item(shop_cat, shop_index).price)})
 		Sfx.play("buy")
 		Sfx.vibrate(40)
 		world.burst_confetti(boat.global_position + Vector3(0.0, 2.0, 0.0))
+	_walls_shown = ""
 	_refresh_shop()
 
 
 func _on_shop_back() -> void:
 	boat.apply(Save.boat_cfg())
+	_walls_shown = ""
+	_restore_walls()
 	state = State.MENU
 	cam_mode = "menu"
 	_show_menu()
@@ -1143,6 +1361,11 @@ func _autotest_menus() -> void:
 		for i in Custom.count(cat):
 			_on_shop_pick(i)
 			_on_shop_action()
+	ui.shop_side.emit("wall_r")
+	_on_shop_pick(3)
+	_on_shop_action()
+	Save.add_xp(5000)
+	print("AUTOTEST rank after 5000 xp: %d (%s)" % [Save.rank(), Ranks.title(Save.rank())])
 	_on_shop_back()
 	_on_settings()
 	_on_toggle("music", false)
@@ -1155,6 +1378,7 @@ func _autotest_menus() -> void:
 	ui.tasks_panel.visible = false
 	_show_chests()
 	_on_chest_open("free")
+	_on_mystery()
 	ui.reveal_panel.visible = false
 	ui.chest_panel.visible = false
 	Save.set_player_name("Auto Tester")
@@ -1185,6 +1409,12 @@ func _autotest_tick(delta: float) -> void:
 						_start_ai_race()
 						at_wait = 2.0
 						return
+					if not at_endless:
+						at_endless = true
+						print("AUTOTEST endless")
+						_start_endless()
+						at_wait = 2.0
+						return
 					print("AUTOTEST PASSED levels=%d crashes=%d frames=%d" % [AT_LEVELS, at_crashes, at_frames])
 					get_tree().quit(0)
 					return
@@ -1199,6 +1429,13 @@ func _autotest_tick(delta: float) -> void:
 				_on_resume()
 				print("AUTOTEST pause/resume ok")
 		State.DEAD:
+			if mode == "endless":
+				if ui.lose_panel.visible and at_wait <= 0.0:
+					print("AUTOTEST endless over: score=%d best=%d" % [_endless_score(), Save.best_endless])
+					_on_share()
+					at_wait = 1.0
+					_on_home()
+				return
 			if mode != "levels":
 				return
 			if ui.lose_panel.visible and at_wait <= 0.0:

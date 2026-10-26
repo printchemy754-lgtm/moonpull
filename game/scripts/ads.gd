@@ -26,9 +26,11 @@ var REWARDED_ID: String = TEST_REWARDED_ID if USE_TEST_ADS else REAL_REWARDED_ID
 
 ## Interstitial pacing: at most one every N finished rounds,
 ## never before this level, and never more often than the gap below.
-const INTERSTITIAL_EVERY := 3
-const INTERSTITIAL_FROM_LEVEL := 3
-const INTERSTITIAL_MIN_GAP_MS := 45000
+## Gentle on purpose (the Crossy Road lesson: players who aren't annoyed stay,
+## and players who stay watch far more optional rewarded ads).
+const INTERSTITIAL_EVERY := 4
+const INTERSTITIAL_FROM_LEVEL := 6
+const INTERSTITIAL_MIN_GAP_MS := 75000
 
 var _plugin: Object = null
 var _rounds := 0
@@ -61,6 +63,19 @@ func privacy_required() -> bool:
 func show_privacy_options() -> void:
 	if _plugin:
 		_plugin.showPrivacyOptions()
+
+
+const STORE_URL := "https://play.google.com/store/apps/details?id=com.streamlet.moonpull"
+
+
+## Opens the Android share sheet (or copies the text in the browser/desktop).
+## Returns true when the system share sheet was used.
+func share_text(text: String) -> bool:
+	if _plugin and _plugin.has_method("shareText"):
+		_plugin.shareText(text)
+		return true
+	DisplayServer.clipboard_set(text)
+	return false
 
 
 func show_banner() -> void:

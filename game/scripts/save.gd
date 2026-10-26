@@ -23,6 +23,9 @@ var chest_ready_at := 0      # free chest timer (unix seconds)
 var star_chests := 0         # star chests already opened
 var races := 0
 var race_wins := 0
+var xp := 0
+var best_endless := 0
+var pending_ranks: Array = []   # ranks reached but not yet shown
 
 
 func _ready() -> void:
@@ -57,6 +60,9 @@ func _ready() -> void:
 	star_chests = int(cfg.get_value("p", "star_chests", 0))
 	races = int(cfg.get_value("p", "races", 0))
 	race_wins = int(cfg.get_value("p", "race_wins", 0))
+	xp = int(cfg.get_value("p", "xp", 0))
+	best_endless = int(cfg.get_value("p", "best_endless", 0))
+	pending_ranks = cfg.get_value("p", "pending_ranks", [])
 	sound = bool(cfg.get_value("s", "sound", true))
 	music = bool(cfg.get_value("s", "music", true))
 	vibe = bool(cfg.get_value("s", "vibe", true))
@@ -68,13 +74,17 @@ func _fix() -> void:
 		player_name = random_name()
 	for cat in Custom.CATS:
 		var list: Array = owned_items.get(cat, [])
-		if not list.has(0):
-			list.append(0)
+		for i in Custom.count(cat):
+			if int(Custom.item(cat, i).price) == 0 and not list.has(i):
+				list.append(i)   # free starter items
 		owned_items[cat] = list
-		var eq := int(custom.get(cat, 0))
-		if eq < 0 or eq >= Custom.count(cat) or not list.has(eq):
-			eq = 0
-		custom[cat] = eq
+	for slot in Custom.SLOTS:
+		var cat: String = Custom.SLOTS[slot]
+		var def := int(Custom.DEFAULTS.get(slot, 0))
+		var eq := int(custom.get(slot, def))
+		if eq < 0 or eq >= Custom.count(cat) or not (owned_items[cat] as Array).has(eq):
+			eq = def
+		custom[slot] = eq
 
 
 func save() -> void:
@@ -94,6 +104,9 @@ func save() -> void:
 	cfg.set_value("p", "star_chests", star_chests)
 	cfg.set_value("p", "races", races)
 	cfg.set_value("p", "race_wins", race_wins)
+	cfg.set_value("p", "xp", xp)
+	cfg.set_value("p", "best_endless", best_endless)
+	cfg.set_value("p", "pending_ranks", pending_ranks)
 	cfg.set_value("s", "sound", sound)
 	cfg.set_value("s", "music", music)
 	cfg.set_value("s", "vibe", vibe)
@@ -127,29 +140,39 @@ func owns(cat: String, i: int) -> bool:
 	return (owned_items.get(cat, []) as Array).has(i)
 
 
-func equipped(cat: String) -> int:
-	return int(custom.get(cat, 0))
+## slot = a key of Custom.SLOTS ("hull", ..., "wall_l", "wall_r")
+func equipped(slot: String) -> int:
+	return int(custom.get(slot, int(Custom.DEFAULTS.get(slot, 0))))
 
 
 func boat_cfg() -> Dictionary:
 	return custom.duplicate()
 
 
-func buy(cat: String, i: int) -> bool:
+## Buys item i of category `cat` and equips it into `slot`.
+func buy(cat: String, i: int, slot := "") -> bool:
 	var cost := int(Custom.item(cat, i).price)
-	if owns(cat, i) or coins < cost:
+	if cost < 0 or owns(cat, i) or coins < cost:
 		return false
 	coins -= cost
 	(owned_items[cat] as Array).append(i)
-	custom[cat] = i
+	custom[slot if slot != "" else cat] = i
 	save()
 	return true
 
 
-func equip(cat: String, i: int) -> void:
-	if owns(cat, i):
-		custom[cat] = i
+func equip(slot: String, i: int) -> void:
+	if owns(Custom.SLOTS[slot], i):
+		custom[slot] = i
 		save()
+
+
+func grant(cat: String, i: int) -> bool:
+	if owns(cat, i):
+		return false
+	(owned_items[cat] as Array).append(i)
+	save()
+	return true
 
 
 func owned_count() -> int:
@@ -186,8 +209,18 @@ func daily_amount() -> int:
 	return daily_next_streak() * DAILY_STEP
 
 
+## Returns the coins given. On day 7 the streak-exclusive item is granted too
+## (check `last_daily_item`).
+var last_daily_item: Array = []
+
+
 func claim_daily(multiplier: int) -> int:
 	var amount := daily_amount() * multiplier
+	last_daily_item = []
+	if daily_next_streak() == DAILY_MAX_STREAK:
+		var ex := Custom.streak_unlock()
+		if not ex.is_empty() and grant(ex[0], ex[1]):
+			last_daily_item = ex
 	daily_streak = daily_next_streak()
 	daily_day = today()
 	coins += amount
@@ -247,18 +280,19 @@ func star_chest_ready() -> bool:
 
 ## Opens a chest. kind = "free" or "star". Returns {"coins": n} or {"cat": c, "index": i}.
 func open_chest(kind: String) -> Dictionary:
-	var rich := kind == "star"
+	var rich := kind != "free"
 	if kind == "free":
 		chest_ready_at = int(Time.get_unix_time_from_system()) + CHEST_COOLDOWN
-	else:
+	elif kind == "star":
 		star_chests += 1
 	var reward := {}
 	if randf() < (0.45 if rich else 0.3):
-		var cats := ["hat", "trail", "flag", "sail"] if rich else ["paint", "sail", "flag"]
+		var cats := ["hat", "trail", "flag", "sail", "wall"] if rich else ["paint", "sail", "flag"]
 		var options := []
 		for cat in cats:
 			for i in Custom.count(cat):
-				if not owns(cat, i):
+				var price := int(Custom.item(cat, i).price)
+				if not owns(cat, i) and price > 0 and price <= (20000 if rich else 2500):
 					options.append([cat, i])
 		if not options.is_empty():
 			var pick: Array = options[randi() % options.size()]
@@ -270,3 +304,63 @@ func open_chest(kind: String) -> Dictionary:
 		reward = {"coins": amount}
 	save()
 	return reward
+
+
+# ------------------------------------------------------------------ rank / XP
+
+func rank() -> int:
+	return int(Ranks.from_xp(xp)[0])
+
+
+## Adds XP; ranks reached are rewarded right away and queued for the rank-up screen.
+func add_xp(n: int) -> void:
+	if n <= 0:
+		return
+	var before := rank()
+	xp += n
+	var after := rank()
+	for r in range(before + 1, after + 1):
+		var rw := Ranks.reward(r)
+		coins += int(rw.coins)
+		for pair in rw.items:
+			grant(pair[0], pair[1])
+		pending_ranks.append(r)
+	save()
+
+
+# ------------------------------------------------------------------ mystery box
+
+const MYSTERY_PRICE := 1500
+
+
+## Unowned items a mystery box can give (no exclusives, nothing too pricey).
+func mystery_pool() -> Array:
+	var out := []
+	for cat in Custom.CATS:
+		for i in Custom.count(cat):
+			var price := int(Custom.item(cat, i).price)
+			if price > 0 and price <= 12000 and not owns(cat, i):
+				out.append([cat, i, price])
+	return out
+
+
+## Spends MYSTERY_PRICE for a guaranteed NEW item (cheaper ones are more likely,
+## but a big one can drop -> the thrill). Returns {"cat", "index"} or {}.
+func open_mystery() -> Dictionary:
+	var pool := mystery_pool()
+	if pool.is_empty() or coins < MYSTERY_PRICE:
+		return {}
+	var total := 0.0
+	for p in pool:
+		total += 1.0 / sqrt(float(p[2]))
+	var r := randf() * total
+	var pick: Array = pool[0]
+	for p in pool:
+		r -= 1.0 / sqrt(float(p[2]))
+		if r <= 0.0:
+			pick = p
+			break
+	coins -= MYSTERY_PRICE
+	(owned_items[pick[0]] as Array).append(pick[1])
+	save()
+	return {"cat": pick[0], "index": pick[1]}

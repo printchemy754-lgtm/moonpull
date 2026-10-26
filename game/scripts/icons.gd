@@ -129,6 +129,34 @@ func _draw() -> void:
 			draw_rect(Rect2(c - Vector2(r * 0.8, r * 0.8), Vector2(r * 1.6, r * 1.6)), color)
 			for d in [Vector2(-0.4, -0.4), Vector2(0.4, 0.4), Vector2(0, 0), Vector2(0.4, -0.4), Vector2(-0.4, 0.4)]:
 				draw_circle(c + d * r, r * 0.14, INK)
+		"wall":
+			draw_rect(Rect2(c + Vector2(-r * 0.9, -r * 0.6), Vector2(r * 1.8, r * 1.5)), INK)
+			draw_rect(Rect2(c + Vector2(-r * 0.8, -r * 0.5), Vector2(r * 1.6, r * 1.3)), color)
+			draw_rect(Rect2(c + Vector2(-r * 0.95, -r * 0.85), Vector2(r * 1.9, r * 0.35)), INK)
+			draw_rect(Rect2(c + Vector2(-r * 0.87, -r * 0.78), Vector2(r * 1.74, r * 0.22)), color2)
+			var dark := color.darkened(0.3)
+			for k in 3:
+				var y := c.y - r * 0.15 + k * r * 0.35
+				draw_line(Vector2(c.x - r * 0.8, y), Vector2(c.x + r * 0.8, y), dark, r * 0.06)
+				var off := r * (0.0 if k % 2 == 0 else 0.4)
+				for x in [-0.4, 0.4]:
+					draw_line(Vector2(c.x + r * x + off - r * 0.2, y - r * 0.35), Vector2(c.x + r * x + off - r * 0.2, y), dark, r * 0.06)
+		"wave":
+			for k in 2:
+				var y := c.y - r * 0.2 + k * r * 0.5
+				var pts := PackedVector2Array()
+				for i in 17:
+					var x := c.x - r * 0.85 + i * r * 1.7 / 16.0
+					pts.append(Vector2(x, y + sin(i * 0.8) * r * 0.18))
+				draw_polyline(pts, color, r * 0.2, true)
+		"share":
+			var p1 := c + Vector2(-r * 0.5, 0)
+			var p2 := c + Vector2(r * 0.45, -r * 0.5)
+			var p3 := c + Vector2(r * 0.45, r * 0.5)
+			draw_line(p1, p2, color, r * 0.14, true)
+			draw_line(p1, p3, color, r * 0.14, true)
+			for pt in [p1, p2, p3]:
+				draw_circle(pt, r * 0.24, color)
 		"pause":
 			draw_rect(Rect2(c + Vector2(-r * 0.55, -r * 0.6), Vector2(r * 0.4, r * 1.2)), color)
 			draw_rect(Rect2(c + Vector2(r * 0.15, -r * 0.6), Vector2(r * 0.4, r * 1.2)), color)
