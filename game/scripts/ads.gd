@@ -5,11 +5,24 @@ extends Node
 signal rewarded_finished(earned: bool)
 signal interstitial_closed
 
-# Google's official TEST ad unit IDs — safe for development.
-# Replace with your own AdMob unit IDs before publishing (see README).
-const BANNER_ID := "ca-app-pub-3940256099942544/6300978111"
-const INTERSTITIAL_ID := "ca-app-pub-3940256099942544/1033173712"
-const REWARDED_ID := "ca-app-pub-3940256099942544/5224354917"
+## true  = Google's TEST ads (safe while you develop and play your own game).
+## false = YOUR real ads that earn money. Switch only for the Google Play release:
+## clicking your own real ads can get the AdMob account banned.
+const USE_TEST_ADS := true
+
+# Your AdMob ad units (app "MoonPull", app ID ca-app-pub-7224699187685418~1990333465)
+const REAL_BANNER_ID := "ca-app-pub-7224699187685418/8520704914"
+const REAL_INTERSTITIAL_ID := "ca-app-pub-7224699187685418/5399717554"
+const REAL_REWARDED_ID := "ca-app-pub-7224699187685418/3785710995"
+
+# Google's official test units
+const TEST_BANNER_ID := "ca-app-pub-3940256099942544/6300978111"
+const TEST_INTERSTITIAL_ID := "ca-app-pub-3940256099942544/1033173712"
+const TEST_REWARDED_ID := "ca-app-pub-3940256099942544/5224354917"
+
+var BANNER_ID: String = TEST_BANNER_ID if USE_TEST_ADS else REAL_BANNER_ID
+var INTERSTITIAL_ID: String = TEST_INTERSTITIAL_ID if USE_TEST_ADS else REAL_INTERSTITIAL_ID
+var REWARDED_ID: String = TEST_REWARDED_ID if USE_TEST_ADS else REAL_REWARDED_ID
 
 ## Interstitial pacing: at most one every N finished rounds,
 ## never before this level, and never more often than the gap below.

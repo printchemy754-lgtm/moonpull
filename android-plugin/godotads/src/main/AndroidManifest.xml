@@ -10,10 +10,9 @@
             android:name="org.godotengine.plugin.v2.GodotAds"
             android:value="com.dwarf.godotads.GodotAds" />
 
-        <!-- AdMob App ID. This is Google's TEST id; CI replaces it with the
-             ADMOB_APP_ID repository secret when that secret is set. -->
+        <!-- AdMob App ID of "MoonPull" (works with both test and real ad units). -->
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
-            android:value="ca-app-pub-3940256099942544~3347511713" />
+            android:value="ca-app-pub-7224699187685418~1990333465" />
     </application>
 </manifest>

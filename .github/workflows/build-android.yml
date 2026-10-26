@@ -86,10 +86,13 @@ jobs:
           unzip -q -o "$AAR" classes.jar -d /tmp/godotlib
           cp /tmp/godotlib/classes.jar android-plugin/godotads/libs/godot-lib.jar
           if [ -n "$ADMOB_APP_ID" ]; then
-            sed -i "s#ca-app-pub-3940256099942544~3347511713#${ADMOB_APP_ID}#" android-plugin/godotads/src/main/AndroidManifest.xml
-            echo "Using your AdMob App ID"
+            sed -i "s#ca-app-pub-[0-9]*~[0-9]*#${ADMOB_APP_ID}#" android-plugin/godotads/src/main/AndroidManifest.xml
+            echo "Using AdMob App ID from the ADMOB_APP_ID secret"
+          fi
+          if grep -q "USE_TEST_ADS := true" game/scripts/ads.gd; then
+            echo "::notice::Built with TEST ads. Set USE_TEST_ADS := false in game/scripts/ads.gd for the Google Play release."
           else
-            echo "::warning::ADMOB_APP_ID secret not set - building with Google's TEST AdMob app id."
+            echo "::notice::Built with REAL ads."
           fi
           (cd android-plugin && gradle --no-daemon :godotads:assembleRelease)
           mkdir -p game/addons/godot_ads/bin
@@ -185,6 +188,54 @@ jobs:
             out/moonpull.apk
             out/moonpull.aab
           if-no-files-found: error
+
+  # Plays 14 levels with a bot (headless) and reports any script error.
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download Godot
+        run: |
+          set -e
+          V="${GODOT_VERSION}"
+          wget -q "https://github.com/godotengine/godot/releases/download/${V}-stable/Godot_v${V}-stable_linux.x86_64.zip"
+          unzip -q "Godot_v${V}-stable_linux.x86_64.zip"
+          mv "Godot_v${V}-stable_linux.x86_64" "$HOME/godot"
+          chmod +x "$HOME/godot"
+
+      - name: Autotest (bot plays the game)
+        run: |
+          "$HOME/godot" --headless --path game --import > /dev/null 2>&1 || true
+          "$HOME/godot" --headless --path game --import > /dev/null 2>&1 || true
+          set +e
+          timeout 900 "$HOME/godot" --headless --path game --fixed-fps 60 -- --autotest > autotest.log 2>&1
+          code=$?
+          set -e
+          errors=$(grep -E "SCRIPT ERROR|Parse Error|Invalid call|Invalid access|Invalid get|Invalid set|Nonexistent function|AUTOTEST FAILED" autotest.log | grep -v "tcp:5037" | head -n 40 || true)
+          {
+            echo "## Autotest"
+            echo '```'
+            grep -E "^AUTOTEST" autotest.log | tail -n 60 || true
+            echo '```'
+            if [ -n "$errors" ]; then
+              echo "### Errors"
+              echo '```'
+              grep -B2 -A6 -E "SCRIPT ERROR|Parse Error|Invalid call|Invalid access|Invalid get|Invalid set|Nonexistent function|AUTOTEST FAILED" autotest.log | head -n 120
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$errors" ]; then
+            echo "$errors" | head -n 10 | while read -r line; do echo "::error::$line"; done
+            exit 1
+          fi
+          if ! grep -q "AUTOTEST PASSED" autotest.log; then
+            echo "::error::Autotest did not finish (exit code $code)"
+            tail -n 60 autotest.log
+            exit 1
+          fi
+          grep "AUTOTEST PASSED" autotest.log
 
   # Browser version of the game -> GitHub Pages (play-test on any phone/PC, no install).
   web:

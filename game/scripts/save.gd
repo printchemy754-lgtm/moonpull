@@ -1,35 +1,56 @@
 extends Node
-## Persistent progress: level, pearls, boat colors.
+## Persistent progress and settings.
 
 const PATH := "user://save.cfg"
-const SKIN_COLORS := [
-	Color("ff5a4e"), Color("ffd23f"), Color("3ddc97"),
-	Color("4ea8ff"), Color("b57bff"), Color("f5f5f5"),
-]
-const SKIN_COSTS := [0, 60, 120, 200, 320, 500]
 
 var level := 1
 var pearls := 0
-var skin := 0
-var unlocked := 1
+var boat := 0
+var owned: Array = [true]
+var stars := {}        # "level" -> 0..3
+var seen: Array = []   # element kinds already introduced
+var sound := true
+var music := true
+var vibe := true
 
 
 func _ready() -> void:
 	var cfg := ConfigFile.new()
-	if cfg.load(PATH) == OK:
-		level = int(cfg.get_value("p", "level", 1))
-		pearls = int(cfg.get_value("p", "pearls", 0))
-		skin = int(cfg.get_value("p", "skin", 0))
-		unlocked = clampi(int(cfg.get_value("p", "unlocked", 1)), 1, SKIN_COLORS.size())
-		skin = clampi(skin, 0, unlocked - 1)
+	if cfg.load(PATH) != OK:
+		_fix()
+		return
+	level = maxi(int(cfg.get_value("p", "level", 1)), 1)
+	pearls = maxi(int(cfg.get_value("p", "pearls", 0)), 0)
+	boat = int(cfg.get_value("p", "boat", 0))
+	owned = cfg.get_value("p", "owned", [true])
+	stars = cfg.get_value("p", "stars", {})
+	seen = cfg.get_value("p", "seen", [])
+	sound = bool(cfg.get_value("s", "sound", true))
+	music = bool(cfg.get_value("s", "music", true))
+	vibe = bool(cfg.get_value("s", "vibe", true))
+	_fix()
+
+
+func _fix() -> void:
+	var n := Boat.count()
+	while owned.size() < n:
+		owned.append(false)
+	owned[0] = true
+	if boat < 0 or boat >= n or not owned[boat]:
+		boat = 0
 
 
 func save() -> void:
 	var cfg := ConfigFile.new()
 	cfg.set_value("p", "level", level)
 	cfg.set_value("p", "pearls", pearls)
-	cfg.set_value("p", "skin", skin)
-	cfg.set_value("p", "unlocked", unlocked)
+	cfg.set_value("p", "boat", boat)
+	cfg.set_value("p", "owned", owned)
+	cfg.set_value("p", "stars", stars)
+	cfg.set_value("p", "seen", seen)
+	cfg.set_value("s", "sound", sound)
+	cfg.set_value("s", "music", music)
+	cfg.set_value("s", "vibe", vibe)
 	cfg.save(PATH)
 
 
@@ -43,28 +64,41 @@ func set_level(l: int) -> void:
 	save()
 
 
-func skin_color() -> Color:
-	return SKIN_COLORS[skin]
+func set_stars(l: int, s: int) -> void:
+	var key := str(l)
+	stars[key] = maxi(int(stars.get(key, 0)), s)
+	save()
 
 
-func next_skin_cost() -> int:
-	if unlocked >= SKIN_COLORS.size():
-		return -1
-	return SKIN_COSTS[unlocked]
+func total_stars() -> int:
+	var total := 0
+	for k in stars:
+		total += int(stars[k])
+	return total
 
 
-## Buys the next color if affordable. Returns true on success.
-func buy_next_skin() -> bool:
-	var cost := next_skin_cost()
-	if cost < 0 or pearls < cost:
+func owns(i: int) -> bool:
+	return i >= 0 and i < owned.size() and bool(owned[i])
+
+
+func buy(i: int) -> bool:
+	var cost := Boat.price(i)
+	if owns(i) or pearls < cost:
 		return false
 	pearls -= cost
-	unlocked += 1
-	skin = unlocked - 1
+	owned[i] = true
+	boat = i
 	save()
 	return true
 
 
-func cycle_skin() -> void:
-	skin = (skin + 1) % unlocked
-	save()
+func select(i: int) -> void:
+	if owns(i):
+		boat = i
+		save()
+
+
+func mark_seen(kind: String) -> void:
+	if not seen.has(kind):
+		seen.append(kind)
+		save()
