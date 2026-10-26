@@ -170,6 +170,29 @@ public class GodotAds extends GodotPlugin {
         });
     }
 
+    @UsedByGodot
+    public boolean isPrivacyOptionsRequired() {
+        final Activity activity = getActivity();
+        if (activity == null) {
+            return false;
+        }
+        return UserMessagingPlatform.getConsentInformation(activity).getPrivacyOptionsRequirementStatus()
+                == ConsentInformation.PrivacyOptionsRequirementStatus.REQUIRED;
+    }
+
+    @UsedByGodot
+    public void showPrivacyOptions() {
+        final Activity activity = getActivity();
+        if (activity == null) {
+            return;
+        }
+        activity.runOnUiThread(() -> UserMessagingPlatform.showPrivacyOptionsForm(activity, formError -> {
+            if (formError != null) {
+                Log.w(TAG, "Privacy options: " + formError.getMessage());
+            }
+        }));
+    }
+
     // ------------------------------------------------------------------ consent + init
 
     private void requestConsent(final Activity activity) {

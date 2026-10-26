@@ -26,7 +26,9 @@ var finish_z := 100.0
 
 var rng := RandomNumberGenerator.new()
 var _mats := {}
-var _pearl_mesh: SphereMesh
+var _coin_mesh: ArrayMesh
+var _coin_mat: StandardMaterial3D
+var sparkle: CPUParticles3D
 var _fall_shader: Shader
 
 
@@ -38,11 +40,23 @@ func _ready() -> void:
 	confetti = _burst_particles(90, 2.2, Vector3(0.0, -5.0, 0.0), 5.0, 10.0, 0.09, true)
 	level_root = Node3D.new()
 	add_child(level_root)
-	_pearl_mesh = SphereMesh.new()
-	_pearl_mesh.radius = 0.3
-	_pearl_mesh.height = 0.6
-	_pearl_mesh.radial_segments = 14
-	_pearl_mesh.rings = 7
+	_coin_mesh = _make_coin_mesh()
+	_coin_mat = StandardMaterial3D.new()
+	_coin_mat.albedo_color = Color("ffc531")
+	_coin_mat.metallic = 0.85
+	_coin_mat.roughness = 0.28
+	_coin_mat.emission_enabled = true
+	_coin_mat.emission = Color("ffae00")
+	_coin_mat.emission_energy_multiplier = 0.45
+	_coin_mat.next_pass = Toon.outline_mat(0.025)
+	sparkle = _burst_particles(14, 0.45, Vector3.ZERO, 2.0, 4.0, 0.07, false)
+	sparkle.spread = 180.0
+	var sp_mat := _fx_mat("coin_sparkle", Color(1.0, 0.85, 0.3, 1.0), 3.0)
+	sparkle.material_override = sp_mat
+	var sp_ramp := Gradient.new()
+	sp_ramp.set_color(0, Color(1.0, 0.95, 0.6, 1.0))
+	sp_ramp.set_color(1, Color(1.0, 0.7, 0.1, 0.0))
+	sparkle.color_ramp = sp_ramp
 	_fall_shader = load("res://shaders/fall.gdshader")
 
 
@@ -72,16 +86,11 @@ func build_level(data: Dictionary, level: int) -> void:
 	_spawn_ambient()
 
 
-func _mat(key: String, color: Color, rough := 0.9, glow := 0.0) -> StandardMaterial3D:
+## Toon material with an ink outline (outline 0 for huge surfaces like walls).
+func _mat(key: String, color: Color, _rough := 0.9, glow := 0.0, outline := 0.035) -> Material:
 	if _mats.has(key):
 		return _mats[key]
-	var m := StandardMaterial3D.new()
-	m.albedo_color = color
-	m.roughness = rough
-	if glow > 0.0:
-		m.emission_enabled = true
-		m.emission = color
-		m.emission_energy_multiplier = glow
+	var m := Toon.mat(color, glow, outline)
 	_mats[key] = m
 	return m
 
@@ -213,6 +222,7 @@ func _build_moon() -> void:
 	moon_mat.emission_enabled = true
 	moon_mat.emission_energy_multiplier = 1.3
 	moon_mat.set("disable_fog", true)
+	moon_mat.next_pass = Toon.outline_mat(0.18)
 	moon.material_override = moon_mat
 	moon.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(moon)
@@ -428,8 +438,36 @@ func _build_orb(root: Node3D, e: Dictionary) -> void:
 	e["spinner"] = spinner
 
 
+## One merged mesh per coin (1 draw call): disc + raised rim + embossed centre.
+func _make_coin_mesh() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var upright := Transform3D(Basis(Vector3.RIGHT, PI * 0.5), Vector3.ZERO)
+	var body := CylinderMesh.new()
+	body.top_radius = 0.36
+	body.bottom_radius = 0.36
+	body.height = 0.08
+	body.radial_segments = 28
+	body.rings = 1
+	st.append_from(body, 0, upright)
+	var rim := TorusMesh.new()
+	rim.inner_radius = 0.31
+	rim.outer_radius = 0.41
+	rim.rings = 28
+	rim.ring_segments = 8
+	st.append_from(rim, 0, upright)
+	var face := CylinderMesh.new()
+	face.top_radius = 0.19
+	face.bottom_radius = 0.21
+	face.height = 0.13
+	face.radial_segments = 20
+	face.rings = 1
+	st.append_from(face, 0, upright)
+	return st.commit()
+
+
 func _spawn_pearl(pos: Vector3) -> void:
-	var mi := _mi(level_root, _pearl_mesh, _mat("pearl", Color("fff4e6"), 0.15, 1.2), pos)
+	var mi := _mi(level_root, _coin_mesh, _coin_mat, pos)
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	pearls.append({"node": mi, "y": pos.y, "z": pos.z, "taken": false})
 
@@ -480,20 +518,20 @@ func _spawn_canyon(length: float) -> void:
 			var col: Color = cols[rng.randi() % cols.size()]
 			var inset := rng.randf_range(0.0, 0.6)
 			var inner: float = s * (LevelGen.RIVER_W * 0.5 + 1.0 + inset)
-			var m := _mat("wall_" + col.to_html(), col, 0.95)
+			var m := _mat("wall_" + col.to_html(), col, 0.95, 0.0, 0.0)
 			_box(level_root, Vector3(30.0, hgt, seg + 0.02), Vector3(inner + s * 15.0, LevelGen.FLOOR_Y - 1.0 + hgt * 0.5, z + seg * 0.5), m)
 			# ledge detail
 			var ledge_y := rng.randf_range(1.5, top - 1.5)
-			_box(level_root, Vector3(0.5, 0.35, seg * rng.randf_range(0.4, 0.9)), Vector3(inner - s * 0.15, ledge_y, z + seg * 0.5), _mat("wall_" + col.darkened(0.15).to_html(), col.darkened(0.15), 0.95))
+			_box(level_root, Vector3(0.5, 0.35, seg * rng.randf_range(0.4, 0.9)), Vector3(inner - s * 0.15, ledge_y, z + seg * 0.5), _mat("ledge_" + col.darkened(0.15).to_html(), col.darkened(0.15), 0.95, 0.0, 0.0))
 			if rng.randf() < 0.5:
 				_deco(Vector3(s * rng.randf_range(LevelGen.RIVER_W * 0.5 + 2.6, LevelGen.RIVER_W * 0.5 + 10.0), top, z + rng.randf_range(0.0, seg)))
 			if theme.deco == "ice":
-				_box(level_root, Vector3(30.0, 0.25, seg + 0.02), Vector3(inner + s * 15.0, top + 0.1, z + seg * 0.5), _mat("snow", Color("ffffff"), 0.8))
+				_box(level_root, Vector3(30.0, 0.25, seg + 0.02), Vector3(inner + s * 15.0, top + 0.1, z + seg * 0.5), _mat("snow", Color("ffffff"), 0.8, 0.0, 0.0))
 			if rng.randf() < 0.1 and z > 10.0:
 				_waterfall(inner - s * 0.06, top, z + seg * 0.5, s)
 		z += seg
 	_box(level_root, Vector3(LevelGen.RIVER_W + 4.0, 1.0, length + 60.0),
-		Vector3(0.0, LevelGen.FLOOR_Y - 0.5, (length - 40.0) * 0.5 - 10.0), _mat("floor", theme.floor, 1.0))
+		Vector3(0.0, LevelGen.FLOOR_Y - 0.5, (length - 40.0) * 0.5 - 10.0), _mat("floor", theme.floor, 1.0, 0.0, 0.0))
 
 
 func _waterfall(x: float, top: float, z: float, side: float) -> void:
@@ -631,7 +669,7 @@ func update(delta: float, run_t: float, t: float, water_y: float, boat_z: float,
 		if pz < near or pz > far:
 			continue
 		var n: Node3D = p.node
-		n.rotation.y += delta * 2.0
+		n.rotation.y += delta * 3.2
 		n.position.y = float(p.y) + sin(t * 3.0 + pz) * 0.12
 
 
@@ -673,6 +711,8 @@ func take_pickup(e: Dictionary) -> void:
 
 func take_pearl(p: Dictionary, to: Vector3) -> void:
 	p.taken = true
+	sparkle.global_position = (p.node as Node3D).global_position
+	sparkle.restart()
 	var n: Node3D = p.node
 	var tw := create_tween().set_parallel(true)
 	tw.tween_property(n, "position", to, 0.18)

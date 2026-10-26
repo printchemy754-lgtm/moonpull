@@ -4,6 +4,8 @@ extends Control
 
 var kind := "star"
 var color := Color.WHITE
+var color2 := Color.WHITE
+const INK := Color(0.09, 0.07, 0.23)
 
 
 func _init(k := "star", c := Color.WHITE) -> void:
@@ -56,6 +58,77 @@ func _draw() -> void:
 			draw_circle(c, r * 0.85, Color("e3c9a8"))
 			draw_circle(c - Vector2(r * 0.05, r * 0.05), r * 0.75, Color("fff4e6"))
 			draw_circle(c - Vector2(r * 0.3, r * 0.3), r * 0.2, Color.WHITE)
+		"coin":
+			draw_circle(c + Vector2(0, r * 0.08), r * 0.9, Color("b8650a"))
+			draw_circle(c, r * 0.9, Color("ffc531"))
+			draw_circle(c, r * 0.68, Color("f2a516"))
+			draw_circle(c - Vector2(r * 0.04, r * 0.04), r * 0.62, Color("ffd65c"))
+			var mo := _arc_points(c, r * 0.4, PI * 0.4, PI * 1.6, 16)
+			mo.append_array(_arc_points(c + Vector2(r * 0.18, -r * 0.02), r * 0.3, PI * 1.5, PI * 0.5, 16))
+			draw_colored_polygon(mo, Color("c97a10"))
+			draw_arc(c, r * 0.8, PI * 1.1, PI * 1.45, 10, Color(1, 1, 1, 0.75), r * 0.12, true)
+		"swatch":
+			draw_circle(c, r * 0.92, INK)
+			draw_circle(c, r * 0.78, color)
+			draw_circle(c - Vector2(r * 0.28, r * 0.28), r * 0.18, Color(1, 1, 1, 0.45))
+		"flag2":
+			draw_rect(Rect2(c - Vector2(r * 0.12, r * 0.9), Vector2(r * 0.14, r * 1.8)), INK)
+			draw_rect(Rect2(c + Vector2(0.0, -r * 0.85), Vector2(r * 0.9, r * 0.75)), INK)
+			draw_rect(Rect2(c + Vector2(r * 0.07, -r * 0.78), Vector2(r * 0.76, r * 0.61)), color)
+			draw_circle(c + Vector2(r * 0.45, -r * 0.47), r * 0.17, color2)
+		"hat":
+			draw_rect(Rect2(c + Vector2(-r * 0.85, r * 0.25), Vector2(r * 1.7, r * 0.3)), INK)
+			draw_rect(Rect2(c + Vector2(-r * 0.5, -r * 0.6), Vector2(r * 1.0, r * 0.95)), INK)
+			draw_rect(Rect2(c + Vector2(-r * 0.75, r * 0.32), Vector2(r * 1.5, r * 0.16)), color)
+			draw_rect(Rect2(c + Vector2(-r * 0.4, -r * 0.5), Vector2(r * 0.8, r * 0.8)), color)
+			draw_rect(Rect2(c + Vector2(-r * 0.4, r * 0.05), Vector2(r * 0.8, r * 0.15)), color2)
+		"wake":
+			for k in 3:
+				var y := c.y - r * 0.5 + k * r * 0.5
+				var pts := PackedVector2Array()
+				for i in 13:
+					var x := c.x - r * 0.85 + i * r * 1.7 / 12.0
+					pts.append(Vector2(x, y + sin(i * 1.1 + k) * r * 0.12))
+				draw_polyline(pts, INK, r * 0.3, true)
+				draw_polyline(pts, color if k != 1 else color2, r * 0.18, true)
+		"chest":
+			draw_rect(Rect2(c + Vector2(-r * 0.9, -r * 0.2), Vector2(r * 1.8, r * 1.0)), INK)
+			draw_rect(Rect2(c + Vector2(-r * 0.8, -r * 0.1), Vector2(r * 1.6, r * 0.8)), Color("b8642b"))
+			var lid := _arc_points(c + Vector2(0, -r * 0.2), r * 0.9, PI, TAU, 16)
+			draw_colored_polygon(lid, INK)
+			var lid2 := _arc_points(c + Vector2(0, -r * 0.24), r * 0.8, PI, TAU, 16)
+			draw_colored_polygon(lid2, Color("d9803a"))
+			draw_rect(Rect2(c + Vector2(-r * 0.9, -r * 0.28), Vector2(r * 1.8, r * 0.16)), color)
+			draw_rect(Rect2(c + Vector2(-r * 0.16, -r * 0.34), Vector2(r * 0.32, r * 0.4)), color)
+			draw_rect(Rect2(c + Vector2(-r * 0.08, -r * 0.24), Vector2(r * 0.16, r * 0.18)), INK)
+		"task":
+			draw_rect(Rect2(c + Vector2(-r * 0.7, -r * 0.85), Vector2(r * 1.4, r * 1.7)), INK)
+			draw_rect(Rect2(c + Vector2(-r * 0.6, -r * 0.75), Vector2(r * 1.2, r * 1.5)), Color("fff3d6"))
+			for k in 3:
+				var y := c.y - r * 0.4 + k * r * 0.42
+				draw_line(Vector2(c.x - r * 0.42, y), Vector2(c.x - r * 0.28, y + r * 0.12), color, r * 0.12, true)
+				draw_line(Vector2(c.x - r * 0.28, y + r * 0.12), Vector2(c.x - r * 0.08, y - r * 0.12), color, r * 0.12, true)
+				draw_line(Vector2(c.x + r * 0.02, y), Vector2(c.x + r * 0.45, y), Color(0.3, 0.3, 0.45), r * 0.1, true)
+		"trophy":
+			draw_colored_polygon(PackedVector2Array([c + Vector2(-r * 0.62, -r * 0.8), c + Vector2(r * 0.62, -r * 0.8), c + Vector2(r * 0.45, r * 0.05), c + Vector2(0, r * 0.25), c + Vector2(-r * 0.45, r * 0.05)]), color)
+			draw_arc(c + Vector2(-r * 0.6, -r * 0.45), r * 0.28, PI * 0.5, PI * 1.5, 10, color, r * 0.13, true)
+			draw_arc(c + Vector2(r * 0.6, -r * 0.45), r * 0.28, -PI * 0.5, PI * 0.5, 10, color, r * 0.13, true)
+			draw_rect(Rect2(c + Vector2(-r * 0.1, r * 0.2), Vector2(r * 0.2, r * 0.35)), color)
+			draw_rect(Rect2(c + Vector2(-r * 0.45, r * 0.55), Vector2(r * 0.9, r * 0.25)), color)
+		"user":
+			draw_circle(c + Vector2(0, -r * 0.3), r * 0.38, color)
+			draw_colored_polygon(_arc_points(c + Vector2(0, r * 0.75), r * 0.72, PI, TAU, 16), color)
+		"wifi":
+			for k in 3:
+				draw_arc(c + Vector2(0, r * 0.55), r * (0.35 + k * 0.32), PI * 1.2, PI * 1.8, 12, color, r * 0.15, true)
+			draw_circle(c + Vector2(0, r * 0.55), r * 0.13, color)
+		"pencil":
+			draw_line(c + Vector2(-r * 0.6, r * 0.6), c + Vector2(r * 0.55, -r * 0.55), color, r * 0.3, true)
+			draw_colored_polygon(PackedVector2Array([c + Vector2(-r * 0.75, r * 0.75), c + Vector2(-r * 0.68, r * 0.38), c + Vector2(-r * 0.38, r * 0.68)]), color)
+		"dice":
+			draw_rect(Rect2(c - Vector2(r * 0.8, r * 0.8), Vector2(r * 1.6, r * 1.6)), color)
+			for d in [Vector2(-0.4, -0.4), Vector2(0.4, 0.4), Vector2(0, 0), Vector2(0.4, -0.4), Vector2(-0.4, 0.4)]:
+				draw_circle(c + d * r, r * 0.14, INK)
 		"pause":
 			draw_rect(Rect2(c + Vector2(-r * 0.55, -r * 0.6), Vector2(r * 0.4, r * 1.2)), color)
 			draw_rect(Rect2(c + Vector2(r * 0.15, -r * 0.6), Vector2(r * 0.4, r * 1.2)), color)

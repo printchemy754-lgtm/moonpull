@@ -50,6 +50,19 @@ func is_real() -> bool:
 	return _plugin != null
 
 
+## GDPR: true when the player is in a region where they must be able to
+## change their ad consent (shows a PRIVACY button in Settings).
+func privacy_required() -> bool:
+	if _plugin:
+		return _plugin.isPrivacyOptionsRequired()
+	return false
+
+
+func show_privacy_options() -> void:
+	if _plugin:
+		_plugin.showPrivacyOptions()
+
+
 func show_banner() -> void:
 	if _plugin:
 		_plugin.showBanner()

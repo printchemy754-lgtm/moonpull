@@ -1,29 +1,33 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <defs>
-    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1b1d4a"/>
-      <stop offset="0.62" stop-color="#7a4f7f"/>
-      <stop offset="1" stop-color="#f2a07b"/>
-    </linearGradient>
-    <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#3fb6d1"/>
-      <stop offset="1" stop-color="#0d3f72"/>
-    </linearGradient>
-    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0.55" stop-color="#fff3d6" stop-opacity="0.55"/>
-      <stop offset="1" stop-color="#fff3d6" stop-opacity="0"/>
-    </radialGradient>
-  </defs>
-  <rect width="512" height="512" rx="112" fill="url(#sky)"/>
-  <circle cx="256" cy="168" r="120" fill="url(#glow)"/>
-  <circle cx="256" cy="168" r="78" fill="#fff3d6"/>
-  <circle cx="230" cy="150" r="13" fill="#f0dfb8"/>
-  <circle cx="284" cy="190" r="9" fill="#f0dfb8"/>
-  <path d="M256 262 L256 300" stroke="#fff3d6" stroke-width="10" stroke-linecap="round" stroke-dasharray="2 20"/>
-  <path d="M0 330 Q64 306 128 330 T256 330 T384 330 T512 330 L512 512 L0 512 Z" fill="url(#sea)"/>
-  <path d="M0 330 Q64 306 128 330 T256 330 T384 330 T512 330" fill="none" stroke="#e8fbff" stroke-width="10"/>
-  <path d="M196 314 L320 314 L300 344 L210 344 Z" fill="#ff5a4e"/>
-  <rect x="252" y="236" width="8" height="80" fill="#6e4b33"/>
-  <path d="M248 244 L248 306 L198 306 Z" fill="#f4f1ea"/>
-  <path d="M0 400 Q64 380 128 400 T256 400 T384 400 T512 400" fill="none" stroke="#8fe3ff" stroke-width="8" opacity="0.55"/>
+<defs>
+  <radialGradient id="moonglow" cx="0.5" cy="0.5" r="0.5">
+    <stop offset="0.55" stop-color="#fff3d6" stop-opacity="0.55"/>
+    <stop offset="1" stop-color="#fff3d6" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="moon" cx="0.4" cy="0.35" r="0.75">
+    <stop offset="0" stop-color="#fffdf5"/><stop offset="0.7" stop-color="#ffeec4"/><stop offset="1" stop-color="#f3d79a"/>
+  </radialGradient>
+  <linearGradient id="sea1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4fd2ee"/><stop offset="1" stop-color="#1b7fc4"/></linearGradient>
+  <linearGradient id="sea2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a8fd6"/><stop offset="1" stop-color="#0f3f86"/></linearGradient>
+  <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff2a8"/><stop offset="0.5" stop-color="#ffc531"/><stop offset="1" stop-color="#ff8a1f"/></linearGradient>
+  <linearGradient id="white" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#cfe9ff"/></linearGradient>
+  <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1b1d4a"/><stop offset="0.6" stop-color="#6a4a8a"/><stop offset="1" stop-color="#f2a07b"/></linearGradient>
+  <linearGradient id="hull" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff6b5e"/><stop offset="1" stop-color="#d63a2f"/></linearGradient>
+</defs>
+<rect width="512" height="512" rx="0" fill="url(#sky)"/>
+<circle cx="256" cy="205" r="218" fill="url(#moonglow)"/>
+<circle cx="256" cy="205" r="150" fill="url(#moon)" stroke="#16123a" stroke-width="10"/>
+<circle cx="204" cy="168" r="24" fill="#f0dca8"/>
+<circle cx="301" cy="212" r="15" fill="#f0dca8"/>
+<circle cx="264" cy="130" r="11" fill="#f0dca8"/>
+<path d="M0 687.5 L0 287.5 Q45.0 265.5 90.0 287.5 Q135.0 309.5 180.0 287.5 Q225.0 265.5 270.0 287.5 Q315.0 309.5 360.0 287.5 Q405.0 265.5 450.0 287.5 Q495.0 309.5 540.0 287.5 L512 687.5 Z" fill="url(#sea1)" stroke="#16123a" stroke-width="10" stroke-linejoin="round"/>
+<g transform="translate(233.5 273.5) scale(0.8823529411764706) rotate(-6)">
+  <path d="M-60 0 L60 0 L42 26 L-44 26 Z" fill="url(#hull)" stroke="#16123a" stroke-width="6" stroke-linejoin="round"/>
+  <rect x="-3" y="-82" width="7" height="84" fill="#6e4b33" stroke="#16123a" stroke-width="3"/>
+  <path d="M-6 -76 L-6 -6 L-52 -6 Z" fill="#ffffff" stroke="#16123a" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M8 -60 L8 -6 L40 -6 Z" fill="#ffffff" stroke="#16123a" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M4 -82 L30 -74 L4 -66 Z" fill="#ffd23f" stroke="#16123a" stroke-width="3" stroke-linejoin="round"/>
+</g>
+<path d="M0 687.5 L0 347.5 Q75.0 327.5 110.0 347.5 Q185.0 367.5 220.0 347.5 Q295.0 327.5 330.0 347.5 Q405.0 367.5 440.0 347.5 Q515.0 327.5 550.0 347.5 L512 687.5 Z" fill="url(#sea2)" stroke="#16123a" stroke-width="10" stroke-linejoin="round"/>
+<path d="M121 312 q20 -14 40 0 M346 318 q20 -14 40 0" stroke="#e8fbff" stroke-width="8" fill="none" stroke-linecap="round"/>
 </svg>

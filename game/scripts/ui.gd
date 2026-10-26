@@ -3,31 +3,49 @@ extends CanvasLayer
 ## All 2D UI, built in code. Canvas width is 720 (portrait); height grows on tall phones.
 
 signal settings_pressed
+signal privacy_pressed
 signal boats_pressed
+signal free_pressed
+signal daily_claim(multiplier: int)
 signal shop_back
-signal shop_prev
-signal shop_next
+signal shop_tab(cat: String)
+signal shop_pick(index: int)
 signal shop_action
-signal shop_ad
 signal toggle_changed(setting: String, value: bool)
 signal pause_pressed
 signal resume_pressed
 signal restart_pressed
 signal home_pressed
-signal retry_pressed
+signal retry_pressed       # "No thanks" on the wrecked screen
 signal continue_pressed
-signal next_pressed
-signal triple_pressed
+signal next_pressed        # "No thanks" on the win screen
+signal claim_pressed(multiplier: int)
+signal name_changed(new_name: String)
+signal tasks_pressed
+signal task_claim(index: int)
+signal task_bonus
+signal chest_pressed
+signal chest_open(kind: String)
+signal race_pressed
+signal race_ai
+signal race_host
+signal race_join(code: String)
+signal race_start
+signal race_leave
+signal race_double
+signal race_done
 
 const INK := Color(0.07, 0.05, 0.16, 0.92)
 const GOLD := Color("ffd166")
-const PANEL := Color(0.08, 0.07, 0.2, 0.86)
+const PANEL := Color(0.08, 0.07, 0.2, 0.88)
 const BLUE := Color("4e7cff")
 const GREEN := Color("2fbf71")
 const ORANGE := Color("f2994a")
+const PURPLE := Color("7b5cff")
 const BOTTOM_SAFE := 220.0  # keep buttons above the banner ad
 
-var font: FontVariation
+var font: Font
+var title_font: Font
 var top := 40.0
 var root: Control
 
@@ -35,14 +53,15 @@ var hud: Control
 var menu: Control
 var shop: Control
 var settings_panel: Control
+var daily_panel: Control
 var pause_panel: Control
 var lose_panel: Control
 var win_panel: Control
 var blocker: ColorRect
 var fader: ColorRect
 
-var pearl_pill: Control
-var pearl_label: Label
+var coin_pill: Control
+var coin_label: Label
 var level_label: Label
 var progress: ProgressBar
 var progress_boat: IconDraw
@@ -58,33 +77,78 @@ var hint_icon: IconDraw
 var countdown_label: Label
 var _hint_tw: Tween
 
-var title_label: Label
+var logo: TextureRect
 var world_label: Label
 var level_nodes: Array[PanelContainer] = []
 var stars_label: Label
 var menu_hint: Label
+var free_btn: Button
+var profile_btn: Button
+var tasks_btn: Button
+var chest_btn: Button
+var race_btn: Button
+var profile_panel: Control
+var name_edit: LineEdit
+var tasks_panel: Control
+var tasks_box: VBoxContainer
+var chest_panel: Control
+var chest_free_btn: Button
+var chest_star_btn: Button
+var chest_star_bar: ProgressBar
+var reveal_panel: Control
+var reveal_icon: IconDraw
+var reveal_text: Label
+var race_panel: Control
+var race_status: Label
+var race_code_label: Label
+var race_code_edit: LineEdit
+var race_players: VBoxContainer
+var race_start_btn: Button
+var race_lan_box: VBoxContainer
+var race_hud: VBoxContainer
+var race_place: Label
+var race_list: VBoxContainer
+var results_panel: Control
+var results_title: Label
+var results_list: VBoxContainer
+var results_reward: Label
+var results_double: Button
+var _modals: Array[Control] = []
 
 var shop_name: Label
 var shop_status: Label
 var shop_action_btn: Button
-var shop_ad_btn: Button
+var shop_free_btn: Button
+var shop_tabs := {}
+var shop_tiles: HBoxContainer
+var shop_scroll: ScrollContainer
 
 var toggles := {}
+var privacy_btn: Button
+
+var daily_day_label: Label
+var daily_amount_label: Label
 
 var lose_info: Label
 var lose_bar: ProgressBar
+var lose_coins: Label
 var continue_btn: Button
+var lose_mult: MultiplierBar
+var lose_claim: Button
+var lose_skip: Button
+
 var win_title: Label
-var win_info: Label
+var win_coins: Label
 var win_stars: Array[IconDraw] = []
-var triple_btn: Button
+var win_mult: MultiplierBar
+var win_claim: Button
+var win_skip: Button
 
 
 func _ready() -> void:
 	layer = 10
-	font = FontVariation.new()
-	font.base_font = ThemeDB.fallback_font
-	font.variation_embolden = 0.9
+	font = load("res://fonts/Fredoka-Bold.ttf")
+	title_font = load("res://fonts/LilitaOne.ttf")
 	var th := Theme.new()
 	th.default_font = font
 	th.default_font_size = 38
@@ -98,9 +162,15 @@ func _ready() -> void:
 	_build_menu()
 	_build_shop()
 	_build_settings()
+	_build_daily()
 	_build_pause()
 	_build_lose()
 	_build_win()
+	_build_profile()
+	_build_tasks()
+	_build_chests()
+	_build_race()
+	_build_results()
 	_build_overlays()
 
 
@@ -111,6 +181,16 @@ func _top_inset() -> float:
 		return 0.0
 	var vp_h := get_viewport().get_visible_rect().size.y
 	return clampf(float(safe.position.y) * vp_h / float(win.y), 0.0, 120.0)
+
+
+static func fmt(n: int) -> String:
+	## 12500 -> "12,500"
+	var s := str(absi(n))
+	var out := ""
+	while s.length() > 3:
+		out = "," + s.substr(s.length() - 3) + out
+		s = s.substr(0, s.length() - 3)
+	return ("-" if n < 0 else "") + s + out
 
 
 # ================================================================== widgets
@@ -133,14 +213,14 @@ func _label(text: String, font_size: int, color := Color.WHITE, outline := 10) -
 	var l := Label.new()
 	l.text = text
 	var ls := LabelSettings.new()
-	ls.font = font
+	ls.font = title_font if font_size >= 56 else font
 	ls.font_size = font_size
 	ls.font_color = color
 	ls.outline_size = outline
 	ls.outline_color = INK
-	ls.shadow_size = 0 if outline == 0 else 4
-	ls.shadow_color = Color(0, 0, 0, 0.35)
-	ls.shadow_offset = Vector2(0, 4)
+	ls.shadow_size = 0 if outline == 0 else 2
+	ls.shadow_color = Color(0.07, 0.05, 0.16, 0.6)
+	ls.shadow_offset = Vector2(0, 5)
 	l.label_settings = ls
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -152,8 +232,15 @@ func _style(color: Color, radius := 32, border := 8) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = color
 	sb.set_corner_radius_all(radius)
-	sb.border_width_bottom = border
-	sb.border_color = color.darkened(0.35)
+	if border > 0:
+		# "inked" outline like the logo: dark rim with a thicker bottom lip
+		sb.border_width_left = 4
+		sb.border_width_right = 4
+		sb.border_width_top = 4
+		sb.border_width_bottom = border + 2
+		sb.border_color = Toon.INK
+	else:
+		sb.border_color = color.darkened(0.35)
 	sb.content_margin_left = 24
 	sb.content_margin_right = 24
 	sb.anti_aliasing = true
@@ -185,9 +272,23 @@ func _button(text: String, color: Color, icon := "", min_size := Vector2(480, 11
 		ic.offset_top = -s * 0.5 - 3
 		ic.offset_bottom = s * 0.5 - 3
 		b.add_child(ic)
+		b.set_meta("icon", ic)
 		if text != "":
-			b.add_theme_constant_override("h_separation", 0)
 			b.text = "    " + text
+	_juice(b)
+	return b
+
+
+func _link_button(text: String) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.flat = true
+	b.custom_minimum_size = Vector2(300, 70)
+	b.add_theme_font_size_override("font_size", 32)
+	for c in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
+		b.add_theme_color_override(c, Color(0.85, 0.88, 1.0, 0.75))
+	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	b.focus_mode = Control.FOCUS_NONE
 	_juice(b)
 	return b
 
@@ -224,8 +325,8 @@ func _juice(b: Button) -> void:
 
 func _pill(icon: String, color: Color) -> Array:
 	var p := PanelContainer.new()
-	var sb := _style(Color(0.08, 0.07, 0.2, 0.7), 30, 0)
-	sb.content_margin_left = 64
+	var sb := _style(Color(0.08, 0.07, 0.2, 0.75), 30, 0)
+	sb.content_margin_left = 66
 	sb.content_margin_right = 26
 	sb.content_margin_top = 4
 	sb.content_margin_bottom = 4
@@ -237,10 +338,10 @@ func _pill(icon: String, color: Color) -> Array:
 	p.add_child(l)
 	var ic := IconDraw.new(icon, color)
 	ic.set_anchors_preset(Control.PRESET_CENTER_LEFT)
-	ic.offset_left = 12
-	ic.offset_right = 56
-	ic.offset_top = -22
-	ic.offset_bottom = 22
+	ic.offset_left = 10
+	ic.offset_right = 58
+	ic.offset_top = -24
+	ic.offset_bottom = 24
 	p.add_child(ic)
 	return [p, l]
 
@@ -252,22 +353,46 @@ func _panel_box(width := 600.0) -> VBoxContainer:
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var panel := PanelContainer.new()
 	var sb := _style(PANEL, 44, 0)
-	sb.set_content_margin_all(44)
+	sb.set_content_margin_all(40)
 	sb.border_width_top = 3
 	sb.border_width_left = 3
 	sb.border_width_right = 3
 	sb.border_width_bottom = 3
-	sb.border_color = Color(1, 1, 1, 0.12)
+	sb.border_color = Color(1, 1, 1, 0.14)
+	sb.shadow_color = Color(0, 0, 0, 0.35)
+	sb.shadow_size = 18
+	sb.shadow_offset = Vector2(0, 10)
 	panel.add_theme_stylebox_override("panel", sb)
 	panel.custom_minimum_size = Vector2(width, 0)
 	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 24)
+	box.add_theme_constant_override("separation", 20)
 	box.alignment = BoxContainer.ALIGNMENT_CENTER
 	panel.add_child(box)
 	center.add_child(panel)
 	box.set_meta("holder", center)
 	box.set_meta("panel", panel)
+	center.set_meta("panel", panel)
 	return box
+
+
+func _center(c: Control) -> CenterContainer:
+	var cc := CenterContainer.new()
+	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cc.add_child(c)
+	return cc
+
+
+func _coin_row(font_size: int) -> Array:
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 10)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var ic := IconDraw.new("coin")
+	ic.custom_minimum_size = Vector2(font_size * 1.1, font_size * 1.1)
+	row.add_child(ic)
+	var l := _label("0", font_size, GOLD, 10)
+	row.add_child(l)
+	return [row, l]
 
 
 func _pop(c: Control) -> void:
@@ -281,6 +406,10 @@ func _pop(c: Control) -> void:
 	var tw := target.create_tween().set_parallel(true)
 	tw.tween_property(target, "scale", Vector2.ONE, 0.28).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	tw.tween_property(target, "modulate:a", 1.0, 0.18)
+
+
+func _set_btn_text(b: Button, text: String) -> void:
+	b.text = ("    " + text) if b.has_meta("icon") else text
 
 
 # ================================================================== builders
@@ -341,68 +470,513 @@ func _build_hud() -> void:
 		effects_row.add_child(chip)
 		effect_chips[k[0]] = [chip, l]
 
-	var pill := _pill("pearl", GOLD)
-	pearl_pill = pill[0]
-	pearl_label = pill[1]
-	_place(pearl_pill, Control.PRESET_TOP_RIGHT, -250, top + 10, -24, top + 76)
-	pearl_pill.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	root.add_child(pearl_pill)
+	var pill := _pill("coin", GOLD)
+	coin_pill = pill[0]
+	coin_label = pill[1]
+	_place(coin_pill, Control.PRESET_TOP_RIGHT, -260, top + 10, -24, top + 76)
+	coin_pill.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	root.add_child(coin_pill)
+
+
+func _side_button(icon: String, text: String, color: Color, size := 118.0) -> Button:
+	var b := _round_button(icon, color, size)
+	var ic: IconDraw = b.get_meta("icon")
+	ic.offset_bottom = -size * 0.34
+	ic.offset_top = size * 0.14
+	var l := _label(text, 22, Color.WHITE, 6)
+	l.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
+	l.offset_top = -40
+	l.offset_bottom = -8
+	b.add_child(l)
+	b.set_meta("label", l)
+	var badge := PanelContainer.new()
+	var sb := _style(Color("ff3d5a"), 20, 0)
+	sb.content_margin_left = 8
+	sb.content_margin_right = 8
+	sb.border_width_left = 3
+	sb.border_width_right = 3
+	sb.border_width_top = 3
+	sb.border_width_bottom = 3
+	sb.border_color = Toon.INK
+	badge.add_theme_stylebox_override("panel", sb)
+	badge.position = Vector2(size - 36, -8)
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var bl := _label("!", 24, Color.WHITE, 4)
+	badge.add_child(bl)
+	badge.visible = false
+	b.add_child(badge)
+	b.set_meta("badge", badge)
+	b.set_meta("badge_label", bl)
+	return b
+
+
+func set_badge(b: Button, text: String) -> void:
+	var badge: Control = b.get_meta("badge")
+	badge.visible = text != ""
+	(b.get_meta("badge_label") as Label).text = text
+
+
+func set_side_text(b: Button, text: String) -> void:
+	(b.get_meta("label") as Label).text = text
 
 
 func _build_menu() -> void:
 	menu = _full(Control.new())
 	root.add_child(menu)
-	var gear := _round_button("gear", Color(0.08, 0.07, 0.2, 0.7), 92.0)
-	_place(gear, Control.PRESET_TOP_LEFT, 24, top, 116, top + 92)
+	# top-left: profile + settings
+	profile_btn = _button("Captain", Color(0.08, 0.07, 0.2, 0.75), "user", Vector2(300, 76), 28)
+	_place(profile_btn, Control.PRESET_TOP_LEFT, 24, top + 6, 324, top + 82)
+	profile_btn.pressed.connect(func():
+		name_edit.text = Save.player_name
+		_pop(profile_panel))
+	menu.add_child(profile_btn)
+	var gear := _round_button("gear", Color(0.08, 0.07, 0.2, 0.7), 76.0)
+	_place(gear, Control.PRESET_TOP_LEFT, 24, top + 96, 100, top + 172)
 	gear.pressed.connect(func(): settings_pressed.emit())
 	menu.add_child(gear)
 	var stars := _pill("star", GOLD)
 	var stars_pill: Control = stars[0]
 	stars_label = stars[1]
-	_place(stars_pill, Control.PRESET_TOP_RIGHT, -250, top + 88, -24, top + 154)
+	_place(stars_pill, Control.PRESET_TOP_RIGHT, -260, top + 88, -24, top + 154)
 	stars_pill.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	menu.add_child(stars_pill)
 
-	title_label = _label("MOONPULL", 108, Color("fff3d6"), 20)
-	_place(title_label, Control.PRESET_TOP_WIDE, 0, top + 170, 0, top + 300)
-	menu.add_child(title_label)
-	var tag := _label("You don't steer the boat.\nYou steer the sea.", 34, Color("cfe9ff"), 8)
-	_place(tag, Control.PRESET_TOP_WIDE, 0, top + 300, 0, top + 390)
-	menu.add_child(tag)
+	logo = TextureRect.new()
+	logo.texture = load("res://logo.svg")
+	logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	logo.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_place(logo, Control.PRESET_CENTER_TOP, -300, top + 170, 300, top + 550)
+	logo.pivot_offset = Vector2(300, 190)
+	menu.add_child(logo)
+	var breathe := logo.create_tween().set_loops()
+	breathe.tween_property(logo, "scale", Vector2(1.03, 1.03), 1.4).set_trans(Tween.TRANS_SINE)
+	breathe.tween_property(logo, "scale", Vector2.ONE, 1.4).set_trans(Tween.TRANS_SINE)
 
-	world_label = _label("WORLD 1 · SUNSET CANYON", 32, GOLD, 8)
-	_place(world_label, Control.PRESET_TOP_WIDE, 0, top + 420, 0, top + 470)
+	world_label = _label("WORLD 1 · SUNSET CANYON", 30, GOLD, 8)
+	_place(world_label, Control.PRESET_TOP_WIDE, 0, top + 560, 0, top + 606)
 	menu.add_child(world_label)
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	row.add_theme_constant_override("separation", 26)
-	_place(row, Control.PRESET_TOP_WIDE, 0, top + 480, 0, top + 560)
+	row.add_theme_constant_override("separation", 18)
+	_place(row, Control.PRESET_TOP_WIDE, 0, top + 614, 0, top + 690)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	menu.add_child(row)
 	for i in Themes.LEVELS_PER_WORLD:
 		var node := PanelContainer.new()
-		node.custom_minimum_size = Vector2(72, 72)
+		node.custom_minimum_size = Vector2(66, 66)
 		node.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		var l := _label(str(i + 1), 34, Color.WHITE, 6)
+		var l := _label(str(i + 1), 32, Color.WHITE, 6)
 		node.add_child(l)
 		row.add_child(node)
 		level_nodes.append(node)
 
-	menu_hint = _label("HOLD ANYWHERE TO SAIL", 46, Color.WHITE, 12)
-	_place(menu_hint, Control.PRESET_BOTTOM_WIDE, 0, -BOTTOM_SAFE - 330, 0, -BOTTOM_SAFE - 250)
+	# side buttons, Going-Balls style
+	tasks_btn = _side_button("task", "TASKS", Color("2fbf71"))
+	_place(tasks_btn, Control.PRESET_TOP_LEFT, 22, top + 720, 140, top + 838)
+	tasks_btn.pressed.connect(func(): tasks_pressed.emit())
+	menu.add_child(tasks_btn)
+	chest_btn = _side_button("chest", "CHEST", Color("e0902f"))
+	chest_btn.get_meta("icon").color = GOLD
+	_place(chest_btn, Control.PRESET_TOP_LEFT, 22, top + 852, 140, top + 970)
+	chest_btn.pressed.connect(func(): chest_pressed.emit())
+	menu.add_child(chest_btn)
+	race_btn = _side_button("trophy", "RACE", Color("ff5a4e"))
+	race_btn.get_meta("icon").color = GOLD
+	_place(race_btn, Control.PRESET_TOP_RIGHT, -140, top + 720, -22, top + 838)
+	race_btn.pressed.connect(func(): race_pressed.emit())
+	menu.add_child(race_btn)
+	var pulse := race_btn.create_tween().set_loops()
+	pulse.tween_property(race_btn, "scale", Vector2(1.07, 1.07), 0.6).set_trans(Tween.TRANS_SINE)
+	pulse.tween_property(race_btn, "scale", Vector2.ONE, 0.6).set_trans(Tween.TRANS_SINE)
+	var boats := _side_button("boat", "BOAT", ORANGE)
+	_place(boats, Control.PRESET_TOP_RIGHT, -140, top + 852, -22, top + 970)
+	boats.pressed.connect(func(): boats_pressed.emit())
+	menu.add_child(boats)
+
+	menu_hint = _label("HOLD ANYWHERE\nTO SAIL", 40, Color.WHITE, 12)
+	_place(menu_hint, Control.PRESET_TOP_WIDE, 150, top + 760, -150, top + 880)
 	menu.add_child(menu_hint)
 	var tw := menu_hint.create_tween().set_loops()
 	tw.tween_property(menu_hint, "modulate:a", 0.35, 0.7)
 	tw.tween_property(menu_hint, "modulate:a", 1.0, 0.7)
 
-	var boats := _button("BOATS", ORANGE, "boat", Vector2(380, 110))
-	_place(boats, Control.PRESET_CENTER_BOTTOM, -190, -BOTTOM_SAFE - 130, 190, -BOTTOM_SAFE - 20)
-	boats.pressed.connect(func(): boats_pressed.emit())
-	menu.add_child(boats)
+	free_btn = _button("+500", PURPLE, "ad", Vector2(300, 100))
+	_place(free_btn, Control.PRESET_CENTER_BOTTOM, -150, -BOTTOM_SAFE - 110, 150, -BOTTOM_SAFE - 10)
+	free_btn.pressed.connect(func(): free_pressed.emit())
+	menu.add_child(free_btn)
 
-	var bob := title_label.create_tween().set_loops()
-	bob.tween_property(title_label, "position:y", -10.0, 1.2).as_relative().set_trans(Tween.TRANS_SINE)
-	bob.tween_property(title_label, "position:y", 10.0, 1.2).as_relative().set_trans(Tween.TRANS_SINE)
+
+# ---------------------------------------------------------------- profile
+
+func _build_profile() -> void:
+	var box := _panel_box(600.0)
+	profile_panel = box.get_meta("holder")
+	root.add_child(profile_panel)
+	_modals.append(profile_panel)
+	box.add_child(_label("YOUR NAME", 64, GOLD, 12))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	box.add_child(row)
+	name_edit = LineEdit.new()
+	name_edit.max_length = 14
+	name_edit.custom_minimum_size = Vector2(390, 96)
+	name_edit.add_theme_font_size_override("font_size", 40)
+	name_edit.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var es := _style(Color("f7f2e6"), 26, 6)
+	name_edit.add_theme_stylebox_override("normal", es)
+	name_edit.add_theme_stylebox_override("focus", es)
+	name_edit.add_theme_color_override("font_color", Toon.INK)
+	name_edit.add_theme_color_override("caret_color", Toon.INK)
+	row.add_child(name_edit)
+	var dice := _round_button("dice", BLUE, 96.0)
+	dice.pressed.connect(func(): name_edit.text = Save.random_name())
+	row.add_child(dice)
+	box.add_child(_label("Shown above your boat in races", 26, Color("cfe9ff"), 4))
+	var ok := _button("SAVE", GREEN, "check", Vector2(480, 104))
+	ok.pressed.connect(func():
+		name_changed.emit(name_edit.text)
+		profile_panel.visible = false)
+	box.add_child(ok)
+	profile_panel.visible = false
+
+
+# ---------------------------------------------------------------- tasks
+
+func _build_tasks() -> void:
+	var box := _panel_box(640.0)
+	tasks_panel = box.get_meta("holder")
+	root.add_child(tasks_panel)
+	_modals.append(tasks_panel)
+	box.add_child(_label("DAILY TASKS", 64, GOLD, 12))
+	box.add_child(_label("New tasks every day", 26, Color("cfe9ff"), 4))
+	tasks_box = VBoxContainer.new()
+	tasks_box.add_theme_constant_override("separation", 14)
+	box.add_child(tasks_box)
+	var close := _button("CLOSE", BLUE, "close", Vector2(480, 96))
+	close.pressed.connect(func(): tasks_panel.visible = false)
+	box.add_child(close)
+	tasks_panel.visible = false
+
+
+func show_tasks(list: Array, bonus_ready: bool, bonus_done: bool, bonus: int) -> void:
+	for ch in tasks_box.get_children():
+		ch.queue_free()
+	for i in list.size():
+		var m: Dictionary = list[i]
+		var row := PanelContainer.new()
+		var sb := _style(Color(0.15, 0.13, 0.32), 24, 4)
+		sb.set_content_margin_all(16)
+		row.add_theme_stylebox_override("panel", sb)
+		var h := HBoxContainer.new()
+		h.add_theme_constant_override("separation", 12)
+		row.add_child(h)
+		var v := VBoxContainer.new()
+		v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		h.add_child(v)
+		var tl := _label(Missions.text(m), 28, Color.WHITE, 4)
+		tl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		v.add_child(tl)
+		var bar := ProgressBar.new()
+		bar.show_percentage = false
+		bar.max_value = float(m.target)
+		bar.value = float(m.progress)
+		bar.custom_minimum_size = Vector2(0, 20)
+		bar.add_theme_stylebox_override("background", _style(Color(1, 1, 1, 0.12), 10, 0))
+		bar.add_theme_stylebox_override("fill", _style(GREEN, 10, 0))
+		v.add_child(bar)
+		var pl := _label("%d / %d" % [int(m.progress), int(m.target)], 22, Color("cfe9ff"), 4)
+		pl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		v.add_child(pl)
+		var done := int(m.progress) >= int(m.target)
+		var b := _button(("DONE" if m.claimed else "+%s" % fmt(int(m.reward))), GREEN if done and not m.claimed else Color("6b6f86"), "", Vector2(150, 84), 28)
+		b.disabled = m.claimed or not done
+		var idx := i
+		b.pressed.connect(func(): task_claim.emit(idx))
+		h.add_child(b)
+		tasks_box.add_child(row)
+	var bonus_btn := _button("ALL DONE  +%s" % fmt(bonus) if not bonus_done else "BONUS CLAIMED", ORANGE if bonus_ready else Color("6b6f86"), "chest", Vector2(520, 90), 30)
+	bonus_btn.disabled = not bonus_ready
+	bonus_btn.pressed.connect(func(): task_bonus.emit())
+	tasks_box.add_child(_center(bonus_btn))
+	if not tasks_panel.visible:
+		_pop(tasks_panel)
+
+
+# ---------------------------------------------------------------- chests
+
+func _build_chests() -> void:
+	var box := _panel_box(620.0)
+	chest_panel = box.get_meta("holder")
+	root.add_child(chest_panel)
+	_modals.append(chest_panel)
+	box.add_child(_label("CHESTS", 66, GOLD, 12))
+	var free_ic := IconDraw.new("chest", Color("cfd6e6"))
+	free_ic.custom_minimum_size = Vector2(130, 110)
+	box.add_child(_center(free_ic))
+	chest_free_btn = _button("OPEN", GREEN, "", Vector2(460, 96))
+	chest_free_btn.pressed.connect(func(): chest_open.emit("free"))
+	box.add_child(_center(chest_free_btn))
+	box.add_child(_label("Free chest every 4 hours", 24, Color("cfe9ff"), 4))
+	var star_ic := IconDraw.new("chest", GOLD)
+	star_ic.custom_minimum_size = Vector2(150, 126)
+	box.add_child(_center(star_ic))
+	chest_star_bar = ProgressBar.new()
+	chest_star_bar.show_percentage = false
+	chest_star_bar.max_value = float(Save.STARS_PER_CHEST)
+	chest_star_bar.custom_minimum_size = Vector2(0, 22)
+	chest_star_bar.add_theme_stylebox_override("background", _style(Color(1, 1, 1, 0.12), 11, 0))
+	chest_star_bar.add_theme_stylebox_override("fill", _style(GOLD, 11, 0))
+	box.add_child(chest_star_bar)
+	chest_star_btn = _button("STAR CHEST", ORANGE, "star", Vector2(460, 96))
+	chest_star_btn.pressed.connect(func(): chest_open.emit("star"))
+	box.add_child(_center(chest_star_btn))
+	var close := _link_button("Close")
+	close.pressed.connect(func(): chest_panel.visible = false)
+	box.add_child(_center(close))
+	chest_panel.visible = false
+
+	var rbox := _panel_box(560.0)
+	reveal_panel = rbox.get_meta("holder")
+	root.add_child(reveal_panel)
+	_modals.append(reveal_panel)
+	rbox.add_child(_label("YOU GOT", 56, Color("cfe9ff"), 10))
+	reveal_icon = IconDraw.new("coin")
+	reveal_icon.custom_minimum_size = Vector2(170, 170)
+	rbox.add_child(_center(reveal_icon))
+	reveal_text = _label("", 52, GOLD, 12)
+	reveal_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	rbox.add_child(reveal_text)
+	var ok := _button("AWESOME!", GREEN, "check", Vector2(440, 100))
+	ok.pressed.connect(func(): reveal_panel.visible = false)
+	rbox.add_child(_center(ok))
+	reveal_panel.visible = false
+
+
+func show_chests(free_left: int, star_progress: int, star_ready: bool) -> void:
+	chest_free_btn.disabled = free_left > 0
+	if free_left > 0:
+		chest_free_btn.text = "%d:%02d:%02d" % [free_left / 3600, (free_left / 60) % 60, free_left % 60]
+	else:
+		chest_free_btn.text = "OPEN"
+	chest_star_bar.value = clampi(star_progress, 0, Save.STARS_PER_CHEST)
+	chest_star_btn.disabled = not star_ready
+	_set_btn_text(chest_star_btn, "OPEN STAR CHEST" if star_ready else "STARS %d / %d" % [clampi(star_progress, 0, Save.STARS_PER_CHEST), Save.STARS_PER_CHEST])
+	if not chest_panel.visible:
+		_pop(chest_panel)
+
+
+func show_reveal(reward: Dictionary) -> void:
+	chest_panel.visible = false
+	if reward.has("coins"):
+		reveal_icon.set_kind("coin")
+		reveal_text.text = "+%s COINS" % fmt(int(reward.coins))
+	else:
+		var cat: String = reward.cat
+		var it := Custom.item(cat, int(reward.index))
+		var ic := _tile_icon(cat, it)
+		reveal_icon.color2 = ic.color2
+		reveal_icon.set_kind(ic.kind, ic.color)
+		ic.free()
+		reveal_text.text = "NEW %s:\n%s" % [Custom.CAT_NAMES[cat], String(it.name)]
+	_pop(reveal_panel)
+	reveal_icon.pivot_offset = reveal_icon.custom_minimum_size * 0.5
+	reveal_icon.rotation = -0.4
+	reveal_icon.create_tween().tween_property(reveal_icon, "rotation", 0.0, 0.5).set_trans(Tween.TRANS_ELASTIC).set_ease(Tween.EASE_OUT)
+
+
+# ---------------------------------------------------------------- race
+
+func _build_race() -> void:
+	var box := _panel_box(640.0)
+	race_panel = box.get_meta("holder")
+	root.add_child(race_panel)
+	_modals.append(race_panel)
+	box.add_child(_label("RACE", 76, GOLD, 14))
+	var ai := _button("VS 3 RIVALS", Color("ff5a4e"), "trophy", Vector2(540, 110))
+	ai.pressed.connect(func(): race_ai.emit())
+	box.add_child(_center(ai))
+	box.add_child(_label("Beat AI captains · win up to 600 coins", 24, Color("cfe9ff"), 4))
+	var sep := _label("WI-FI RACE · SAME NETWORK", 30, Color("8fe3ff"), 6)
+	box.add_child(sep)
+	race_lan_box = VBoxContainer.new()
+	race_lan_box.add_theme_constant_override("separation", 12)
+	box.add_child(race_lan_box)
+	var host := _button("CREATE ROOM", BLUE, "wifi", Vector2(540, 96), 34)
+	host.pressed.connect(func(): race_host.emit())
+	race_lan_box.add_child(_center(host))
+	var jr := HBoxContainer.new()
+	jr.alignment = BoxContainer.ALIGNMENT_CENTER
+	jr.add_theme_constant_override("separation", 10)
+	race_lan_box.add_child(jr)
+	race_code_edit = LineEdit.new()
+	race_code_edit.placeholder_text = "code e.g. 1.37"
+	race_code_edit.max_length = 7
+	race_code_edit.custom_minimum_size = Vector2(300, 90)
+	race_code_edit.add_theme_font_size_override("font_size", 34)
+	race_code_edit.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	race_code_edit.virtual_keyboard_type = LineEdit.KEYBOARD_TYPE_NUMBER_DECIMAL
+	var es := _style(Color("f7f2e6"), 24, 6)
+	race_code_edit.add_theme_stylebox_override("normal", es)
+	race_code_edit.add_theme_stylebox_override("focus", es)
+	race_code_edit.add_theme_color_override("font_color", Toon.INK)
+	race_code_edit.add_theme_color_override("font_placeholder_color", Color(0.3, 0.3, 0.45))
+	jr.add_child(race_code_edit)
+	var join := _button("JOIN", GREEN, "", Vector2(200, 90), 34)
+	join.pressed.connect(func(): race_join.emit(race_code_edit.text))
+	jr.add_child(join)
+	race_code_label = _label("", 40, GOLD, 8)
+	race_lan_box.add_child(race_code_label)
+	race_players = VBoxContainer.new()
+	race_lan_box.add_child(race_players)
+	race_start_btn = _button("START RACE", GREEN, "play", Vector2(480, 100))
+	race_start_btn.pressed.connect(func(): race_start.emit())
+	race_lan_box.add_child(_center(race_start_btn))
+	race_status = _label("", 26, Color("ffb3a8"), 4)
+	race_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_child(race_status)
+	var close := _link_button("Close")
+	close.pressed.connect(func(): race_leave.emit())
+	box.add_child(_center(close))
+	race_panel.visible = false
+
+	race_hud = VBoxContainer.new()
+	race_hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_place(race_hud, Control.PRESET_TOP_RIGHT, -250, top + 90, -20, top + 400)
+	race_hud.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	race_place = _label("1st", 72, GOLD, 14)
+	race_place.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	race_hud.add_child(race_place)
+	race_list = VBoxContainer.new()
+	race_list.add_theme_constant_override("separation", 2)
+	race_hud.add_child(race_list)
+	race_hud.visible = false
+	hud.add_child(race_hud)
+
+
+func show_race_lobby(lan_supported: bool, in_room: bool, is_host: bool, code: String, names: Array, status: String) -> void:
+	race_lan_box.visible = true
+	race_code_edit.get_parent().visible = lan_supported and not in_room
+	race_code_label.visible = in_room
+	race_code_label.text = ("ROOM CODE:  %s" % code) if is_host else ("IN ROOM %s" % code)
+	for ch in race_players.get_children():
+		ch.queue_free()
+	for n in names:
+		var l := _label("• " + String(n), 30, Color.WHITE, 4)
+		race_players.add_child(l)
+	race_start_btn.visible = in_room and is_host
+	race_start_btn.disabled = names.size() < 2
+	_set_btn_text(race_start_btn, "START RACE" if names.size() >= 2 else "WAITING FOR PLAYERS...")
+	var host_btn: Control = race_lan_box.get_child(0)
+	host_btn.visible = lan_supported and not in_room
+	race_status.text = status if lan_supported else "Wi-Fi race works in the Android app."
+	if not race_panel.visible:
+		_pop(race_panel)
+
+
+func set_race_hud(on: bool, place: int, total: int, rows: Array) -> void:
+	race_hud.visible = on
+	if not on:
+		return
+	race_place.text = "%s/%d" % [ordinal(place), total]
+	var kids := race_list.get_children()
+	while kids.size() < rows.size():
+		var l := _label("", 24, Color.WHITE, 5)
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		race_list.add_child(l)
+		kids = race_list.get_children()
+	for i in kids.size():
+		var l: Label = kids[i]
+		l.visible = i < rows.size()
+		if i < rows.size():
+			var r: Array = rows[i]
+			l.text = "%d. %s" % [i + 1, String(r[0])]
+			l.label_settings.font_color = GOLD if bool(r[1]) else Color.WHITE
+
+
+static func ordinal(n: int) -> String:
+	match n:
+		1: return "1st"
+		2: return "2nd"
+		3: return "3rd"
+	return "%dth" % n
+
+
+func _build_results() -> void:
+	var box := _panel_box(620.0)
+	results_panel = box.get_meta("holder")
+	root.add_child(results_panel)
+	_modals.append(results_panel)
+	results_title = _label("1st PLACE!", 80, GOLD, 14)
+	box.add_child(results_title)
+	results_list = VBoxContainer.new()
+	results_list.add_theme_constant_override("separation", 8)
+	box.add_child(results_list)
+	var cr := _coin_row(56)
+	box.add_child(cr[0])
+	results_reward = cr[1]
+	results_double = _button("x2 COINS", GREEN, "ad", Vector2(500, 106))
+	results_double.pressed.connect(func(): race_double.emit())
+	box.add_child(_center(results_double))
+	var done := _button("CONTINUE", BLUE, "play", Vector2(500, 100))
+	done.pressed.connect(func(): race_done.emit())
+	box.add_child(_center(done))
+	results_panel.visible = false
+
+
+func show_results(place: int, rows: Array, reward: int) -> void:
+	_only(results_panel)
+	results_title.text = "%s PLACE!" % ordinal(place)
+	results_title.label_settings.font_color = GOLD if place == 1 else (Color("cfe9ff") if place == 2 else Color("ffb38a"))
+	for ch in results_list.get_children():
+		ch.queue_free()
+	for i in rows.size():
+		var r: Array = rows[i]
+		var row := PanelContainer.new()
+		var col := Color(0.25, 0.2, 0.05) if bool(r[1]) else Color(0.15, 0.13, 0.32)
+		var sb := _style(col, 20, 4)
+		sb.content_margin_top = 6
+		sb.content_margin_bottom = 6
+		row.add_theme_stylebox_override("panel", sb)
+		var h := HBoxContainer.new()
+		row.add_child(h)
+		var a := _label("%s  %s" % [ordinal(i + 1), String(r[0])], 30, GOLD if bool(r[1]) else Color.WHITE, 4)
+		a.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		a.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		h.add_child(a)
+		h.add_child(_label(String(r[2]), 28, Color("cfe9ff"), 4))
+		results_list.add_child(row)
+	results_reward.text = fmt(reward)
+	results_double.visible = reward > 0
+	results_double.disabled = false
+	_pop(results_panel)
+
+
+func results_doubled(total: int) -> void:
+	results_reward.text = fmt(total)
+	results_double.disabled = true
+	results_reward.pivot_offset = results_reward.size * 0.5
+	results_reward.scale = Vector2(1.6, 1.6)
+	results_reward.create_tween().tween_property(results_reward, "scale", Vector2.ONE, 0.3).set_trans(Tween.TRANS_BACK)
+
+
+func modal_open() -> bool:
+	for m in _modals:
+		if m.visible:
+			return true
+	return settings_panel.visible or daily_panel.visible
+
+
+## Updates name, badges and timers on the menu's side buttons.
+func refresh_menu_buttons(pname: String, tasks_ready: int, chest_left: int, star_ready: bool) -> void:
+	_set_btn_text(profile_btn, pname)
+	set_badge(tasks_btn, str(tasks_ready) if tasks_ready > 0 else "")
+	if chest_left <= 0 or star_ready:
+		set_badge(chest_btn, "!")
+		set_side_text(chest_btn, "OPEN!")
+	else:
+		set_badge(chest_btn, "")
+		set_side_text(chest_btn, "%d:%02d" % [chest_left / 3600, (chest_left / 60) % 60])
 
 
 func _build_shop() -> void:
@@ -412,48 +986,80 @@ func _build_shop() -> void:
 	_place(back, Control.PRESET_TOP_LEFT, 24, top, 116, top + 92)
 	back.pressed.connect(func(): shop_back.emit())
 	shop.add_child(back)
-	var title := _label("BOATS", 64, Color("fff3d6"), 14)
-	_place(title, Control.PRESET_TOP_WIDE, 0, top + 110, 0, top + 200)
+	var title := _label("WORKSHOP", 70, Color("fff3d6"), 14)
+	_place(title, Control.PRESET_TOP_WIDE, 0, top + 100, 0, top + 190)
 	shop.add_child(title)
+	shop_free_btn = _button("+500 COINS", PURPLE, "ad", Vector2(340, 84), 30)
+	_place(shop_free_btn, Control.PRESET_CENTER_TOP, -170, top + 196, 170, top + 280)
+	shop_free_btn.pressed.connect(func(): free_pressed.emit())
+	shop.add_child(shop_free_btn)
 
-	shop_name = _label("DINGHY", 56, Color.WHITE, 12)
-	_place(shop_name, Control.PRESET_BOTTOM_WIDE, 0, -BOTTOM_SAFE - 470, 0, -BOTTOM_SAFE - 400)
-	shop.add_child(shop_name)
-	shop_status = _label("", 34, GOLD, 8)
-	_place(shop_status, Control.PRESET_BOTTOM_WIDE, 0, -BOTTOM_SAFE - 400, 0, -BOTTOM_SAFE - 350)
-	shop.add_child(shop_status)
-	var prev := _round_button("left", BLUE, 104.0)
-	_place(prev, Control.PRESET_CENTER_BOTTOM, -330, -BOTTOM_SAFE - 470, -226, -BOTTOM_SAFE - 366)
-	prev.pressed.connect(func(): shop_prev.emit())
-	shop.add_child(prev)
-	var next := _round_button("right", BLUE, 104.0)
-	_place(next, Control.PRESET_CENTER_BOTTOM, 226, -BOTTOM_SAFE - 470, 330, -BOTTOM_SAFE - 366)
-	next.pressed.connect(func(): shop_next.emit())
-	shop.add_child(next)
-	shop_action_btn = _button("SELECT", GREEN, "", Vector2(440, 110))
-	_place(shop_action_btn, Control.PRESET_CENTER_BOTTOM, -220, -BOTTOM_SAFE - 330, 220, -BOTTOM_SAFE - 220)
+	var sheet := PanelContainer.new()
+	var sb := _style(Color(0.08, 0.07, 0.2, 0.9), 40, 0)
+	sb.set_content_margin_all(22)
+	sb.border_width_top = 4
+	sb.border_width_left = 4
+	sb.border_width_right = 4
+	sb.border_width_bottom = 4
+	sb.border_color = Toon.INK
+	sheet.add_theme_stylebox_override("panel", sb)
+	_place(sheet, Control.PRESET_BOTTOM_WIDE, 14, -BOTTOM_SAFE - 560, -14, -BOTTOM_SAFE + 20)
+	shop.add_child(sheet)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 12)
+	sheet.add_child(box)
+	var tabs := HBoxContainer.new()
+	tabs.alignment = BoxContainer.ALIGNMENT_CENTER
+	tabs.add_theme_constant_override("separation", 8)
+	box.add_child(tabs)
+	for cat in Custom.CATS:
+		var t := _button(Custom.CAT_NAMES[cat], BLUE, "", Vector2(104, 66), 22)
+		var c: String = cat
+		t.pressed.connect(func(): shop_tab.emit(c))
+		tabs.add_child(t)
+		shop_tabs[cat] = t
+	shop_name = _label("DINGHY", 46, Color.WHITE, 10)
+	box.add_child(shop_name)
+	shop_status = _label("", 28, GOLD, 6)
+	box.add_child(shop_status)
+	shop_scroll = ScrollContainer.new()
+	shop_scroll.custom_minimum_size = Vector2(0, 176)
+	shop_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	box.add_child(shop_scroll)
+	shop_tiles = HBoxContainer.new()
+	shop_tiles.add_theme_constant_override("separation", 12)
+	shop_scroll.add_child(shop_tiles)
+	shop_action_btn = _button("EQUIP", GREEN, "", Vector2(440, 100))
 	shop_action_btn.pressed.connect(func(): shop_action.emit())
-	shop.add_child(shop_action_btn)
-	shop_ad_btn = _button("+60", Color("7b5cff"), "ad", Vector2(300, 96), 36)
-	_place(shop_ad_btn, Control.PRESET_CENTER_BOTTOM, -150, -BOTTOM_SAFE - 190, 150, -BOTTOM_SAFE - 94)
-	shop_ad_btn.pressed.connect(func(): shop_ad.emit())
-	shop.add_child(shop_ad_btn)
-	var pearl_icon := IconDraw.new("pearl")
-	pearl_icon.set_anchors_preset(Control.PRESET_CENTER_RIGHT)
-	pearl_icon.offset_left = -70
-	pearl_icon.offset_right = -30
-	pearl_icon.offset_top = -23
-	pearl_icon.offset_bottom = 17
-	shop_ad_btn.add_child(pearl_icon)
+	box.add_child(_center(shop_action_btn))
+
+
+func _tile_icon(cat: String, it: Dictionary) -> IconDraw:
+	var ic := IconDraw.new()
+	match cat:
+		"hull":
+			ic.set_kind("boat", Color.WHITE)
+		"paint", "sail":
+			ic.set_kind("swatch", it.color)
+		"flag":
+			ic.color2 = it.b
+			ic.set_kind("flag2", it.a)
+		"hat":
+			ic.color2 = Color("e8433a")
+			ic.set_kind("hat", Color("f7f7f2") if it.kind == "cap" else (Color("ffc531") if it.kind == "crown" else Color("ff8fd8") if it.kind == "party" else Color("f0c96b") if it.kind == "straw" else Color("2b2f5a")))
+		"trail":
+			ic.color2 = it.b
+			ic.set_kind("wake", it.a)
+	return ic
 
 
 func _build_settings() -> void:
 	var box := _panel_box(560.0)
 	settings_panel = box.get_meta("holder")
 	root.add_child(settings_panel)
-	box.add_child(_label("SETTINGS", 60, Color("fff3d6"), 12))
+	box.add_child(_label("SETTINGS", 64, Color("fff3d6"), 12))
 	for s in [["sound", "SOUND"], ["music", "MUSIC"], ["vibe", "VIBRATION"]]:
-		var b := _button(s[1], BLUE, s[0], Vector2(460, 104))
+		var b := _button(s[1], BLUE, s[0], Vector2(460, 100))
 		b.toggle_mode = true
 		var key: String = s[0]
 		b.toggled.connect(func(on: bool):
@@ -461,7 +1067,10 @@ func _build_settings() -> void:
 			toggle_changed.emit(key, on))
 		box.add_child(b)
 		toggles[key] = b
-	var close := _button("DONE", GREEN, "check", Vector2(460, 104))
+	privacy_btn = _button("PRIVACY", Color("6b6f86"), "shield", Vector2(460, 100))
+	privacy_btn.pressed.connect(func(): privacy_pressed.emit())
+	box.add_child(privacy_btn)
+	var close := _button("DONE", GREEN, "check", Vector2(460, 100))
 	close.pressed.connect(func(): settings_panel.visible = false)
 	box.add_child(close)
 	settings_panel.visible = false
@@ -474,16 +1083,40 @@ func _style_toggle(b: Button, key: String, on: bool) -> void:
 	b.add_theme_stylebox_override("pressed", _style(col.darkened(0.1)))
 	var label: String = {"sound": "SOUND", "music": "MUSIC", "vibe": "VIBRATION"}[key]
 	b.text = "    %s: %s" % [label, "ON" if on else "OFF"]
-	for c in b.get_children():
-		if c is IconDraw:
-			(c as IconDraw).set_kind(key if on else key + "_off")
+	var ic: IconDraw = b.get_meta("icon")
+	ic.set_kind(key if on else key + "_off")
+
+
+func _build_daily() -> void:
+	var box := _panel_box(580.0)
+	daily_panel = box.get_meta("holder")
+	root.add_child(daily_panel)
+	box.add_child(_label("DAILY GIFT", 68, GOLD, 14))
+	daily_day_label = _label("DAY 1", 36, Color("cfe9ff"), 6)
+	box.add_child(daily_day_label)
+	var gift := IconDraw.new("coin")
+	gift.custom_minimum_size = Vector2(150, 150)
+	box.add_child(_center(gift))
+	var tw := gift.create_tween().set_loops()
+	tw.tween_property(gift, "rotation", 0.12, 0.5).set_trans(Tween.TRANS_SINE)
+	tw.tween_property(gift, "rotation", -0.12, 0.5).set_trans(Tween.TRANS_SINE)
+	gift.resized.connect(func(): gift.pivot_offset = gift.size * 0.5)
+	daily_amount_label = _label("+100", 64, GOLD, 12)
+	box.add_child(daily_amount_label)
+	var x2 := _button("CLAIM x2", GREEN, "ad")
+	x2.pressed.connect(func(): daily_claim.emit(2))
+	box.add_child(x2)
+	var normal := _link_button("Just claim")
+	normal.pressed.connect(func(): daily_claim.emit(1))
+	box.add_child(normal)
+	daily_panel.visible = false
 
 
 func _build_pause() -> void:
 	var box := _panel_box()
 	pause_panel = box.get_meta("holder")
 	root.add_child(pause_panel)
-	box.add_child(_label("PAUSED", 72, Color("fff3d6"), 14))
+	box.add_child(_label("PAUSED", 76, Color("fff3d6"), 14))
 	var resume := _button("RESUME", GREEN, "play")
 	resume.pressed.connect(func(): resume_pressed.emit())
 	box.add_child(resume)
@@ -497,34 +1130,44 @@ func _build_pause() -> void:
 
 
 func _build_lose() -> void:
-	var box := _panel_box()
+	var box := _panel_box(620.0)
 	lose_panel = box.get_meta("holder")
 	root.add_child(lose_panel)
 	box.add_child(_label("WRECKED!", 84, Color("ff7b6b"), 14))
-	lose_info = _label("", 36, Color("cfe9ff"), 6)
+	lose_info = _label("", 32, Color("cfe9ff"), 6)
 	box.add_child(lose_info)
 	lose_bar = ProgressBar.new()
 	lose_bar.show_percentage = false
 	lose_bar.max_value = 1.0
 	lose_bar.step = 0.0
-	lose_bar.custom_minimum_size = Vector2(0, 26)
-	lose_bar.add_theme_stylebox_override("background", _style(Color(1, 1, 1, 0.12), 13, 0))
-	lose_bar.add_theme_stylebox_override("fill", _style(Color("ff9b6b"), 13, 0))
+	lose_bar.custom_minimum_size = Vector2(0, 24)
+	lose_bar.add_theme_stylebox_override("background", _style(Color(1, 1, 1, 0.12), 12, 0))
+	lose_bar.add_theme_stylebox_override("fill", _style(Color("ff9b6b"), 12, 0))
 	box.add_child(lose_bar)
-	continue_btn = _button("CONTINUE", GREEN, "ad")
+	continue_btn = _button("CONTINUE", ORANGE, "ad", Vector2(520, 104))
 	continue_btn.pressed.connect(func(): continue_pressed.emit())
 	box.add_child(continue_btn)
-	var retry := _button("RETRY", BLUE, "retry")
-	retry.pressed.connect(func(): retry_pressed.emit())
-	box.add_child(retry)
+	var cr := _coin_row(54)
+	box.add_child(cr[0])
+	lose_coins = cr[1]
+	lose_mult = MultiplierBar.new()
+	lose_mult.font = font
+	lose_mult.changed.connect(func(m: int): _set_btn_text(lose_claim, "CLAIM x%d" % m))
+	box.add_child(lose_mult)
+	lose_claim = _button("CLAIM x2", GREEN, "ad", Vector2(520, 110))
+	lose_claim.pressed.connect(func(): claim_pressed.emit(lose_mult.stop()))
+	box.add_child(lose_claim)
+	lose_skip = _link_button("No thanks")
+	lose_skip.pressed.connect(func(): retry_pressed.emit())
+	box.add_child(lose_skip)
 	lose_panel.visible = false
 
 
 func _build_win() -> void:
-	var box := _panel_box()
+	var box := _panel_box(620.0)
 	win_panel = box.get_meta("holder")
 	root.add_child(win_panel)
-	win_title = _label("LEVEL 1 CLEAR!", 64, GOLD, 14)
+	win_title = _label("LEVEL 1 CLEAR!", 68, GOLD, 14)
 	box.add_child(win_title)
 	var stars_row := HBoxContainer.new()
 	stars_row.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -537,14 +1180,19 @@ func _build_win() -> void:
 		s.size_flags_vertical = Control.SIZE_SHRINK_END if i != 1 else Control.SIZE_SHRINK_BEGIN
 		stars_row.add_child(s)
 		win_stars.append(s)
-	win_info = _label("", 44, Color.WHITE, 8)
-	box.add_child(win_info)
-	triple_btn = _button("x3 PEARLS", GREEN, "ad")
-	triple_btn.pressed.connect(func(): triple_pressed.emit())
-	box.add_child(triple_btn)
-	var next := _button("NEXT", BLUE, "play")
-	next.pressed.connect(func(): next_pressed.emit())
-	box.add_child(next)
+	var cr := _coin_row(60)
+	box.add_child(cr[0])
+	win_coins = cr[1]
+	win_mult = MultiplierBar.new()
+	win_mult.font = font
+	win_mult.changed.connect(func(m: int): _set_btn_text(win_claim, "CLAIM x%d" % m))
+	box.add_child(win_mult)
+	win_claim = _button("CLAIM x2", GREEN, "ad", Vector2(520, 110))
+	win_claim.pressed.connect(func(): claim_pressed.emit(win_mult.stop()))
+	box.add_child(win_claim)
+	win_skip = _link_button("No thanks")
+	win_skip.pressed.connect(func(): next_pressed.emit())
+	box.add_child(win_skip)
 	win_panel.visible = false
 
 
@@ -556,7 +1204,7 @@ func _build_overlays() -> void:
 	root.add_child(popup_label)
 
 	intro_panel = PanelContainer.new()
-	var sb := _style(Color(0.08, 0.07, 0.2, 0.88), 30, 0)
+	var sb := _style(Color(0.08, 0.07, 0.2, 0.9), 30, 0)
 	sb.set_content_margin_all(22)
 	intro_panel.add_theme_stylebox_override("panel", sb)
 	intro_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -608,14 +1256,17 @@ func _build_overlays() -> void:
 func _only(c: Control) -> void:
 	for x in [hud, menu, shop, lose_panel, win_panel, pause_panel]:
 		x.visible = x == c
+	for m in _modals:
+		m.visible = m == c
 	settings_panel.visible = false
-	hud.visible = c == hud or c == lose_panel or c == win_panel or c == pause_panel
-	pearl_pill.visible = true
+	daily_panel.visible = false
+	hud.visible = c == hud or c == lose_panel or c == win_panel or c == pause_panel or c == results_panel
+	coin_pill.visible = true
 
 
-func show_menu(level: int, pearls: int, world_name: String, world_no: int, step: int, star_total: int) -> void:
+func show_menu(level: int, coins: int, world_name: String, world_no: int, step: int, star_total: int) -> void:
 	_only(menu)
-	set_pearls(pearls)
+	set_coins(coins)
 	stars_label.text = str(star_total)
 	world_label.text = "WORLD %d · %s" % [world_no, world_name.to_upper()]
 	var first := level - step + 1
@@ -646,37 +1297,122 @@ func show_menu(level: int, pearls: int, world_name: String, world_no: int, step:
 			var tw := node.create_tween().set_loops(4)
 			tw.tween_property(node, "scale", Vector2(1.15, 1.15), 0.35)
 			tw.tween_property(node, "scale", Vector2.ONE, 0.35)
+	logo.modulate.a = 0.0
+	logo.create_tween().tween_property(logo, "modulate:a", 1.0, 0.5)
 
 
-func show_shop(name_text: String, price: int, owned: bool, selected: bool, pearls: int, ad_ready: bool) -> void:
-	_only(shop)
-	shop_name.text = name_text
-	set_pearls(pearls)
+## seconds_left = 0 -> ready; >0 -> cooldown; -1 -> no ad loaded yet
+func set_free_state(seconds_left: int, reward: int) -> void:
+	var text := "+%s" % fmt(reward)
+	var shop_text := "+%s COINS" % fmt(reward)
+	var is_ready := seconds_left == 0
+	if seconds_left > 0:
+		text = "%d:%02d" % [seconds_left / 60, seconds_left % 60]
+		shop_text = "FREE COINS IN " + text
+	elif seconds_left < 0:
+		text = "LOADING"
+		shop_text = "AD LOADING..."
+	_set_btn_text(free_btn, text)
+	_set_btn_text(shop_free_btn, shop_text)
+	free_btn.disabled = not is_ready
+	shop_free_btn.disabled = not is_ready
+
+
+func show_shop(cat: String, sel: int, coins: int) -> void:
+	if not shop.visible:
+		_only(shop)
+	set_coins(coins)
+	for c in shop_tabs:
+		var t: Button = shop_tabs[c]
+		var col := GOLD.darkened(0.1) if c == cat else BLUE
+		t.add_theme_stylebox_override("normal", _style(col, 22, 6))
+		t.add_theme_stylebox_override("hover", _style(col.lightened(0.06), 22, 6))
+	# rebuild tiles
+	for ch in shop_tiles.get_children():
+		ch.queue_free()
+	var items := Custom.items(cat)
+	for i in items.size():
+		var it: Dictionary = items[i]
+		var owned := Save.owns(cat, i)
+		var equipped := Save.equipped(cat) == i
+		var tile := Button.new()
+		tile.custom_minimum_size = Vector2(128, 164)
+		tile.focus_mode = Control.FOCUS_NONE
+		tile.mouse_filter = Control.MOUSE_FILTER_PASS
+		var base := Color(0.17, 0.15, 0.36) if owned else Color(0.12, 0.1, 0.25)
+		var st := _style(base, 24, 6)
+		if i == sel:
+			st.border_color = GOLD
+			st.border_width_left = 6
+			st.border_width_right = 6
+			st.border_width_top = 6
+		tile.add_theme_stylebox_override("normal", st)
+		tile.add_theme_stylebox_override("hover", st)
+		tile.add_theme_stylebox_override("pressed", st)
+		tile.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+		var v := VBoxContainer.new()
+		v.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		v.offset_top = 10
+		v.offset_bottom = -10
+		v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		v.alignment = BoxContainer.ALIGNMENT_CENTER
+		tile.add_child(v)
+		var ic := _tile_icon(cat, it)
+		ic.custom_minimum_size = Vector2(76, 76)
+		v.add_child(_center(ic))
+		var sub := "ON" if equipped else ("OWNED" if owned else fmt(int(it.price)))
+		var sub_col := GREEN.lightened(0.3) if equipped else (Color(1, 1, 1, 0.7) if owned else GOLD)
+		var l := _label(sub, 24, sub_col, 6)
+		v.add_child(l)
+		if not owned:
+			var lock := IconDraw.new("lock", Color(1, 1, 1, 0.55))
+			lock.position = Vector2(92, 8)
+			lock.size = Vector2(26, 26)
+			tile.add_child(lock)
+		var idx := i
+		tile.pressed.connect(func(): shop_pick.emit(idx))
+		_juice(tile)
+		shop_tiles.add_child(tile)
+	var cur: Dictionary = items[sel]
+	shop_name.text = String(cur.name)
+	var owned_sel := Save.owns(cat, sel)
 	shop_action_btn.disabled = false
-	if selected:
-		shop_status.text = "SAILING"
-		shop_action_btn.text = "SELECTED"
+	if Save.equipped(cat) == sel:
+		shop_status.text = "EQUIPPED"
+		shop_action_btn.text = "EQUIPPED"
 		shop_action_btn.disabled = true
-	elif owned:
+	elif owned_sel:
 		shop_status.text = "OWNED"
-		shop_action_btn.text = "SELECT"
+		shop_action_btn.text = "EQUIP"
 	else:
-		shop_status.text = "%d PEARLS" % price
-		shop_action_btn.text = "BUY  %d" % price
-		shop_action_btn.disabled = pearls < price
-	shop_ad_btn.disabled = not ad_ready
-	var tw := shop_name.create_tween()
-	shop_name.pivot_offset = Vector2(360, 35)
-	shop_name.scale = Vector2(0.8, 0.8)
-	tw.tween_property(shop_name, "scale", Vector2.ONE, 0.2).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		shop_status.text = "%s COINS" % fmt(int(cur.price))
+		shop_action_btn.text = "BUY  %s" % fmt(int(cur.price))
+		shop_action_btn.disabled = coins < int(cur.price)
+	var pivot := shop_name.size * 0.5
+	shop_name.pivot_offset = pivot
+	shop_name.scale = Vector2(0.85, 0.85)
+	shop_name.create_tween().tween_property(shop_name, "scale", Vector2.ONE, 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	# keep the selected tile in view
+	shop_scroll.set_deferred("scroll_horizontal", maxi(0, sel * 140 - 220))
 
 
-func show_settings(sound: bool, music: bool, vibe: bool) -> void:
+func show_settings(sound: bool, music: bool, vibe: bool, privacy_needed: bool) -> void:
 	for pair in [["sound", sound], ["music", music], ["vibe", vibe]]:
 		var b: Button = toggles[pair[0]]
 		b.set_pressed_no_signal(pair[1])
 		_style_toggle(b, pair[0], pair[1])
+	privacy_btn.visible = privacy_needed
 	_pop(settings_panel)
+
+
+func show_daily(day: int, amount: int) -> void:
+	daily_day_label.text = "DAY %d  ·  COME BACK TOMORROW FOR MORE" % day if day < Save.DAILY_MAX_STREAK else "DAY %d  ·  MAX STREAK!" % day
+	daily_amount_label.text = "+%s" % fmt(amount)
+	_pop(daily_panel)
+
+
+func hide_daily() -> void:
+	daily_panel.visible = false
 
 
 func show_hud(level: int) -> void:
@@ -690,19 +1426,35 @@ func show_pause() -> void:
 	_pop(pause_panel)
 
 
-func show_lose(can_continue: bool, progress_done: float, run_pearls: int) -> void:
+func show_lose(can_continue: bool, progress_done: float, run_coins: int) -> void:
 	_only(lose_panel)
-	lose_info.text = "%d%% of the way  ·  %d pearls" % [int(progress_done * 100.0), run_pearls]
+	lose_info.text = "You made it %d%% of the way" % int(progress_done * 100.0)
 	lose_bar.value = progress_done
 	continue_btn.visible = can_continue
+	lose_coins.text = fmt(run_coins)
+	var has_coins := run_coins > 0
+	lose_mult.visible = has_coins
+	lose_claim.visible = has_coins
+	lose_claim.disabled = false
+	lose_mult.restart()
+	_set_btn_text(lose_claim, "CLAIM x%d" % lose_mult.current())
+	_set_btn_text(lose_skip, "No thanks" if has_coins else "Try again")
+	_delay_skip(lose_skip, has_coins)
 	_pop(lose_panel)
 
 
-func show_win(level: int, stars: int, run_pearls: int) -> void:
+func show_win(level: int, stars: int, run_coins: int) -> void:
 	_only(win_panel)
 	win_title.text = "LEVEL %d CLEAR!" % level
-	win_info.text = "+0"
-	triple_btn.visible = run_pearls > 0
+	win_coins.text = "0"
+	var has_coins := run_coins > 0
+	win_mult.visible = has_coins
+	win_claim.visible = has_coins
+	win_claim.disabled = false
+	win_mult.restart()
+	_set_btn_text(win_claim, "CLAIM x%d" % win_mult.current())
+	_set_btn_text(win_skip, "No thanks" if has_coins else "Next level")
+	_delay_skip(win_skip, has_coins)
 	for s in win_stars:
 		s.set_kind("star_empty")
 		s.scale = Vector2.ONE
@@ -718,15 +1470,43 @@ func show_win(level: int, stars: int, run_pearls: int) -> void:
 			Sfx.play("star", 1.0 + i * 0.15)
 			s.create_tween().tween_property(s, "scale", Vector2.ONE, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT))
 		tw.tween_interval(0.28)
-	tw.tween_method(func(v: float): win_info.text = "+%d" % int(v), 0.0, float(run_pearls), 0.6)
+	tw.tween_method(func(v: float): win_coins.text = fmt(int(v)), 0.0, float(run_coins), 0.6)
 
 
-func set_win_pearls(total: int) -> void:
-	win_info.text = "+%d" % total
-	triple_btn.visible = false
-	win_info.pivot_offset = win_info.size * 0.5
-	win_info.scale = Vector2(1.6, 1.6)
-	win_info.create_tween().tween_property(win_info, "scale", Vector2.ONE, 0.3).set_trans(Tween.TRANS_BACK)
+## "No thanks" appears a moment later, so the player sees the offer first.
+func _delay_skip(b: Button, delayed: bool) -> void:
+	if not delayed:
+		b.modulate.a = 1.0
+		b.disabled = false
+		return
+	b.modulate.a = 0.0
+	b.disabled = true
+	var tw := b.create_tween()
+	tw.tween_interval(1.4)
+	tw.tween_callback(func(): b.disabled = false)
+	tw.tween_property(b, "modulate:a", 1.0, 0.3)
+
+
+## After the ad: show the multiplied amount and lock the claim button.
+func show_claimed(total: int, on_win: bool) -> void:
+	var l := win_coins if on_win else lose_coins
+	var claim := win_claim if on_win else lose_claim
+	var skip := win_skip if on_win else lose_skip
+	claim.disabled = true
+	l.text = fmt(total)
+	l.pivot_offset = l.size * 0.5
+	l.scale = Vector2(1.7, 1.7)
+	l.create_tween().tween_property(l, "scale", Vector2.ONE, 0.35).set_trans(Tween.TRANS_BACK)
+	_set_btn_text(skip, "Next level" if on_win else "Try again")
+	skip.disabled = false
+	skip.modulate.a = 1.0
+
+
+func resume_spin(on_win: bool) -> void:
+	var bar := win_mult if on_win else lose_mult
+	var claim := win_claim if on_win else lose_claim
+	bar.restart()
+	claim.disabled = false
 
 
 func set_progress(p: float) -> void:
@@ -735,14 +1515,14 @@ func set_progress(p: float) -> void:
 	progress_boat.position = Vector2(r.position.x + r.size.x * p - 22.0, r.position.y - 40.0)
 
 
-func set_pearls(n: int) -> void:
-	pearl_label.text = str(n)
+func set_coins(n: int) -> void:
+	coin_label.text = fmt(n)
 
 
-func bump_pearls() -> void:
-	pearl_pill.pivot_offset = pearl_pill.size * 0.5
-	pearl_pill.scale = Vector2(1.15, 1.15)
-	pearl_pill.create_tween().tween_property(pearl_pill, "scale", Vector2.ONE, 0.15)
+func bump_coins() -> void:
+	coin_pill.pivot_offset = coin_pill.size * 0.5
+	coin_pill.scale = Vector2(1.15, 1.15)
+	coin_pill.create_tween().tween_property(coin_pill, "scale", Vector2.ONE, 0.15)
 
 
 ## effects: kind -> seconds left (or -1 for "active, no timer").

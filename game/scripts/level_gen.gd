@@ -85,9 +85,9 @@ static func safe_range(e: Dictionary, t: float) -> Vector2:
 
 # ------------------------------------------------------------------ generation
 
-static func generate(level: int) -> Dictionary:
+static func generate(level: int, seed_override := -1) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
-	rng.seed = level * 7919 + 1234
+	rng.seed = level * 7919 + 1234 if seed_override < 0 else seed_override
 	var speed := speed_for(level)
 	var rise := rise_for(level)
 	var fall := fall_for(level)
@@ -285,3 +285,64 @@ static func _pearl_trail(pearls: Array[Vector3], z0: float, z1: float, a: float,
 		var y := lerpf(a, b, smoothstep(0.15, 0.85, u)) + PICK_OFFSET
 		y = clampf(y, WATER_MIN + PICK_OFFSET, WATER_MAX + PICK_OFFSET - 0.1)
 		pearls.append(Vector3(0.0, y, start + spacing * i))
+
+
+# ------------------------------------------------------------------ AI pilot (rivals + autotest)
+
+## Water level an AI captain at `z` wants right now (ignores pickups).
+static func pilot_target(items: Array, z: float, run_t: float, speed: float) -> float:
+	for e in items:
+		if not is_obstacle(e.kind) or e.get("smashed", false):
+			continue
+		if float(e.z) + float(e.depth) * 0.5 < z - BOAT_HALF_LEN:
+			continue
+		var eta := maxf(0.0, (float(e.z) - z) / maxf(speed, 0.1))
+		var lo := -INF
+		var hi := INF
+		for k in range(-3, 4):
+			var r := safe_range(e, run_t + eta + k * 0.1)
+			lo = maxf(lo, r.x + 0.12)
+			hi = minf(hi, r.y - 0.12)
+		if hi < lo:
+			if e.kind == "drawbridge":
+				lo = WATER_MIN
+				hi = float(e.b) - float(e.amp) - BOAT_TOP - 0.12
+			else:
+				lo = float(e.h) + float(e.amp) + DRAFT + 0.12
+				hi = WATER_MAX
+		if e.h <= NONE_LOW:
+			return maxf(WATER_MIN, hi - 0.35)
+		return (lo + hi) * 0.5 if hi < WATER_MAX else minf(lo + 0.35, WATER_MAX)
+	return WATER_REST
+
+
+## Is something at (z, water) hitting an obstacle right now?
+static func hits(items: Array, z: float, water: float, run_t: float) -> bool:
+	for e in items:
+		if not is_obstacle(e.kind) or e.get("smashed", false):
+			continue
+		var z0 := float(e.z) - float(e.depth) * 0.5
+		var z1 := float(e.z) + float(e.depth) * 0.5
+		if z1 < z - BOAT_HALF_LEN:
+			continue
+		if z0 > z + BOAT_HALF_LEN:
+			return false
+		var h := h_at(e, run_t)
+		var b := b_at(e, run_t)
+		if h > NONE_LOW and water - DRAFT - h + HIT_GRACE < 0.0:
+			return true
+		if b < NONE_HIGH and b - BOAT_TOP - water + HIT_GRACE < 0.0:
+			return true
+	return false
+
+
+## Last safe z before the obstacle at/after z (respawn point).
+static func respawn_z(items: Array, z: float, speed: float) -> float:
+	var back := z - speed * 1.2
+	for e in items:
+		if not is_obstacle(e.kind):
+			continue
+		var z1 := float(e.z) + float(e.depth) * 0.5
+		if z1 + BOAT_HALF_LEN + 0.4 < z - BOAT_HALF_LEN:
+			back = maxf(back, z1 + BOAT_HALF_LEN + 0.4)
+	return maxf(back, 0.0)

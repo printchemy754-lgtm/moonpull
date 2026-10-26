@@ -7,7 +7,10 @@ enum State { MENU, SHOP, PLAYING, PAUSED, COUNTDOWN, DEAD, WON }
 
 const ACCEL := 16.0          # how fast the tide changes direction
 const CLOSE_CALL := 0.28     # clearance that counts as a near miss
-const SHOP_AD_REWARD := 60
+const COIN_VALUE := 10        # every coin you pick up is worth 10
+const CLOSE_CALL_BONUS := 20
+const FREE_REWARD := 500       # "free coins" rewarded ad
+const FREE_COOLDOWN := 120     # seconds between free-coin ads
 
 var state: State = State.MENU
 var level := 1
@@ -26,9 +29,16 @@ var boost_left := 0.0
 var slow_left := 0.0
 var magnet_left := 0.0
 var shield := false
-var run_pearls := 0
-var pearls_got := 0
+var run_coins := 0          # coins earned this run (already x10)
+var banked := 0             # part of run_coins already saved
+var pearls_got := 0         # coin pickups (for stars)
 var pearls_total := 0
+var claim_base := 0
+var claim_mult := 1
+var claim_on_win := false
+var daily_mult := 1
+var free_tick := 0.0
+var first_menu := true
 var streak := 0
 var streak_timer := 0.0
 var continue_used := false
@@ -37,6 +47,7 @@ var countdown_left := 0.0
 var shake := 0.0
 var pending_reward := ""
 var shop_index := 0
+var shop_cat := "hull"
 var cam_mode := "menu"
 var cam_pos := Vector3.ZERO
 var cam_look := Vector3.ZERO
@@ -47,6 +58,22 @@ var boat: Boat
 var camera: Camera3D
 var ui: GameUI
 
+# race
+const RACE_REWARDS := [600, 300, 150, 60]
+const LANES := [-2.7, 2.7, -1.45]
+var mode := "levels"          # "levels" | "race_ai" | "race_lan"
+var race_level := 3
+var rivals: Array[Rival] = []
+var rivals_by_id := {}
+var finish_order: Array = []  # [{"name", "me", "time"}]
+var race_reward := 0
+var race_doubled := false
+var race_done_shown := false
+var net_tick := 0.0
+var menu_tick := 0.0
+var mission_coins := 0
+var lobby_status := ""
+
 # autotest (CI): `godot --headless --fixed-fps 60 -- --autotest`
 var autotest := false
 var at_frames := 0
@@ -54,6 +81,7 @@ var at_wait := 0.0
 var at_crashes := 0
 var at_level_crashes := 0
 var at_paused := false
+var at_raced := false
 const AT_LEVELS := 14
 
 
@@ -62,7 +90,7 @@ func _ready() -> void:
 	add_child(world)
 	boat = Boat.new()
 	add_child(boat)
-	boat.set_model(Save.boat)
+	boat.apply(Save.boat_cfg())
 	camera = Camera3D.new()
 	camera.keep_aspect = Camera3D.KEEP_WIDTH
 	camera.fov = 60.0
@@ -76,10 +104,12 @@ func _ready() -> void:
 	ui.toggle_changed.connect(_on_toggle)
 	ui.boats_pressed.connect(_on_boats)
 	ui.shop_back.connect(_on_shop_back)
-	ui.shop_prev.connect(func(): _shop_step(-1))
-	ui.shop_next.connect(func(): _shop_step(1))
+	ui.shop_tab.connect(_on_shop_tab)
+	ui.shop_pick.connect(_on_shop_pick)
 	ui.shop_action.connect(_on_shop_action)
-	ui.shop_ad.connect(_on_shop_ad)
+	ui.free_pressed.connect(_on_free)
+	ui.daily_claim.connect(_on_daily_claim)
+	ui.privacy_pressed.connect(func(): Ads.show_privacy_options())
 	ui.pause_pressed.connect(_on_pause)
 	ui.resume_pressed.connect(_on_resume)
 	ui.restart_pressed.connect(_on_retry)
@@ -87,14 +117,46 @@ func _ready() -> void:
 	ui.retry_pressed.connect(_on_retry)
 	ui.continue_pressed.connect(_on_continue)
 	ui.next_pressed.connect(_on_next)
-	ui.triple_pressed.connect(_on_triple)
+	ui.claim_pressed.connect(_on_claim)
+	ui.name_changed.connect(func(n: String):
+		Save.set_player_name(n)
+		_refresh_menu_buttons())
+	ui.tasks_pressed.connect(_show_tasks)
+	ui.task_claim.connect(_on_task_claim)
+	ui.task_bonus.connect(_on_task_bonus)
+	ui.chest_pressed.connect(_show_chests)
+	ui.chest_open.connect(_on_chest_open)
+	ui.race_pressed.connect(_show_lobby)
+	ui.race_ai.connect(_start_ai_race)
+	ui.race_host.connect(_on_race_host)
+	ui.race_join.connect(_on_race_join)
+	ui.race_start.connect(_on_race_start)
+	ui.race_leave.connect(_on_race_leave)
+	ui.race_double.connect(_on_race_double)
+	ui.race_done.connect(_on_race_done)
+	Net.lobby_changed.connect(func():
+		if ui.race_panel.visible:
+			_show_lobby())
+	Net.race_started.connect(_begin_lan_race)
+	Net.state_received.connect(_on_net_state)
+	Net.player_finished.connect(_on_net_finished)
+	Net.connection_failed.connect(func(reason: String):
+		lobby_status = reason
+		if ui.race_panel.visible:
+			_show_lobby())
+	Net.disconnected.connect(func():
+		lobby_status = "Room closed."
+		if mode == "race_lan" and state != State.MENU:
+			ui.popup("Connection lost", Color("ff9b8b"))
+		elif ui.race_panel.visible:
+			_show_lobby())
 	Ads.rewarded_finished.connect(_on_rewarded_finished)
 
 	autotest = "--autotest" in OS.get_cmdline_user_args()
 	if autotest:
 		print("AUTOTEST start")
 		Save.level = 1
-		Save.pearls = 5000
+		Save.coins = 50000
 		Save.seen = []
 		at_wait = 1.0
 	level = Save.level
@@ -126,6 +188,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	else:
 		return
+	if is_press and ui.modal_open():
+		return
 	holding = is_press
 	if is_press and state == State.MENU:
 		_start_run()
@@ -151,6 +215,13 @@ func _process(delta: float) -> void:
 	var factor := 0.0
 	match state:
 		State.MENU, State.SHOP:
+			free_tick -= delta
+			if free_tick <= 0.0:
+				free_tick = 0.5
+				_update_free_button()
+				_refresh_menu_buttons()
+				if ui.chest_panel.visible:
+					_show_chests()
 			var idle := LevelGen.WATER_REST + sin(t * 1.3) * 0.15
 			water_y = lerpf(water_y, idle, 1.0 - exp(-3.0 * delta))
 			water_vel = 0.0
@@ -165,7 +236,10 @@ func _process(delta: float) -> void:
 			_tutorial()
 			ui.set_progress(clampf(boat_z / world.finish_z, 0.0, 1.0))
 			if boat_z >= world.finish_z and state == State.PLAYING:
-				_win()
+				if mode == "levels":
+					_win()
+				else:
+					_race_finish()
 		State.COUNTDOWN:
 			countdown_left -= delta
 			ui.set_countdown(ceili(countdown_left))
@@ -178,8 +252,10 @@ func _process(delta: float) -> void:
 			water_vel = 0.0
 			water_y = lerpf(water_y, LevelGen.WATER_REST + 0.6, 1.0 - exp(-2.0 * delta))
 
+	if mode != "levels":
+		_race_tick(delta)
 	boat.position = Vector3(0.0, water_y, boat_z)
-	boat.tick(delta, t, water_vel, factor, state != State.DEAD)
+	boat.tick(delta, t, water_vel, factor, state != State.DEAD, holding and (state == State.PLAYING or state == State.COUNTDOWN))
 	world.update(delta, run_t, t, water_y, boat_z, holding and state == State.PLAYING)
 	_update_camera(delta)
 
@@ -233,8 +309,8 @@ func _update_camera(delta: float) -> void:
 			rate = 3.0
 		"shop":
 			var a2 := t * 0.45
-			pos = bp + Vector3(sin(a2) * 3.9, 1.8, cos(a2) * 3.9)
-			look = bp + Vector3(0.0, 0.55, 0.0)
+			pos = bp + Vector3(sin(a2) * 3.6, 1.5, cos(a2) * 3.6)
+			look = bp + Vector3(0.0, -0.75, 0.0)
 			fov = 58.0
 			rate = 4.0
 		"win":
@@ -316,14 +392,15 @@ func _check_pearls() -> void:
 
 func _collect(p: Dictionary) -> void:
 	world.take_pearl(p, boat.global_position + Vector3(0.0, 1.0, 0.0))
-	var value := 2 if boost_left > 0.0 else 1
-	run_pearls += value
+	var value := COIN_VALUE * (2 if boost_left > 0.0 else 1)
+	run_coins += value
+	mission_coins += value
 	pearls_got += 1
 	streak = mini(streak + 1, 10)
 	streak_timer = 1.4
 	Sfx.play("pearl", 1.0 + streak * 0.06)
-	ui.set_pearls(Save.pearls + run_pearls)
-	ui.bump_pearls()
+	ui.set_coins(Save.coins + run_coins - banked)
+	ui.bump_coins()
 
 
 func _take_pickup(e: Dictionary) -> void:
@@ -331,10 +408,12 @@ func _take_pickup(e: Dictionary) -> void:
 	Sfx.vibrate(30)
 	match e.kind:
 		"boost":
+			_mission("rings")
 			boost_left = LevelGen.BOOST_TIME
 			Sfx.play("boost")
 			ui.popup("SPEED!  x2 PEARLS", Color("ffc531"))
 		"slow":
+			_mission("rings")
 			slow_left = LevelGen.SLOW_TIME
 			Sfx.play("slow")
 			ui.popup("SLOW-MO", Color("8fd8ff"))
@@ -361,9 +440,10 @@ func _use_shield(e: Dictionary) -> void:
 
 
 func _close_call() -> void:
-	run_pearls += 2
-	ui.set_pearls(Save.pearls + run_pearls)
-	ui.popup("CLOSE CALL!  +2")
+	run_coins += CLOSE_CALL_BONUS
+	ui.set_coins(Save.coins + run_coins - banked)
+	ui.popup("CLOSE CALL!  +%d" % CLOSE_CALL_BONUS)
+	_mission("close")
 	Sfx.play("close")
 	Sfx.vibrate(25)
 
@@ -379,9 +459,16 @@ func _crash(i: int) -> void:
 	world.burst_splash(boat.global_position + Vector3(0.0, 0.4, 0.9))
 	boat.crash()
 	ui.hide_hint()
+	if mode != "levels":
+		await get_tree().create_timer(1.1).timeout
+		if state == State.DEAD and mode != "levels":
+			_race_respawn()
+		return
 	await get_tree().create_timer(0.75).timeout
 	if state == State.DEAD:
-		ui.show_lose(not continue_used, clampf(boat_z / world.finish_z, 0.0, 1.0), run_pearls)
+		_bank()
+		ui.set_coins(Save.coins)
+		ui.show_lose(not continue_used, clampf(boat_z / world.finish_z, 0.0, 1.0), run_coins)
 
 
 func _stars() -> int:
@@ -401,10 +488,13 @@ func _win() -> void:
 	var stars := _stars()
 	Sfx.play("win")
 	Sfx.vibrate(40)
-	Save.add_pearls(run_pearls)
+	_bank()
 	Save.set_stars(level, stars)
 	Save.set_level(level + 1)
-	ui.set_pearls(Save.pearls)
+	_mission("levels")
+	if stars == 3:
+		_mission("stars3")
+	ui.set_coins(Save.coins)
 	world.open_chest()
 	world.burst_confetti(boat.global_position + Vector3(0.0, 2.5, 3.0))
 	boost_left = 0.0
@@ -412,7 +502,7 @@ func _win() -> void:
 	ui.set_effects({})
 	await get_tree().create_timer(0.9).timeout
 	if state == State.WON:
-		ui.show_win(level, stars, run_pearls)
+		ui.show_win(level, stars, run_coins)
 
 
 func _revive() -> void:
@@ -473,7 +563,7 @@ func _intros() -> void:
 
 
 func _tutorial() -> void:
-	if level > 2:
+	if level > 2 or mode != "levels":
 		return
 	var e := _next_obstacle()
 	if e.is_empty() or float(e.z) - boat_z > 24.0:
@@ -491,13 +581,23 @@ func _tutorial() -> void:
 # =============================================================== level flow
 
 func _load_level() -> void:
-	data = LevelGen.generate(level)
+	_clear_race()
+	mode = "levels"
+	_setup_run(LevelGen.generate(level), level)
+	state = State.MENU
+	cam_mode = "menu"
+	_show_menu()
+
+
+func _setup_run(new_data: Dictionary, theme_level: int) -> void:
+	data = new_data
 	speed = data.speed
 	rise = data.rise
 	fall = data.fall
-	world.build_level(data, level)
+	world.build_level(data, theme_level)
 	pearls_total = world.pearls.size()
-	run_pearls = 0
+	run_coins = 0
+	banked = 0
 	pearls_got = 0
 	continue_used = false
 	crash_index = -1
@@ -512,20 +612,24 @@ func _load_level() -> void:
 	shield = false
 	streak = 0
 	boat.reset_pose()
-	boat.set_model(Save.boat)
+	boat.apply(Save.boat_cfg())
 	boat.show_shield(false)
 	boat.show_magnet(false)
-	state = State.MENU
-	cam_mode = "menu"
+	mission_coins = 0
 	ui.set_countdown(0)
 	ui.hide_hint()
 	ui.set_effects({})
-	_show_menu()
 
 
 func _show_menu() -> void:
 	var th := Themes.for_level(level)
-	ui.show_menu(level, Save.pearls, th.name, Themes.world_index(level) + 1, Themes.step_in_world(level), Save.total_stars())
+	ui.show_menu(level, Save.coins, th.name, Themes.world_index(level) + 1, Themes.step_in_world(level), Save.total_stars())
+	_update_free_button()
+	_refresh_menu_buttons()
+	if first_menu:
+		first_menu = false
+		if Save.daily_available() and not autotest:
+			ui.show_daily(Save.daily_next_streak(), Save.daily_amount())
 
 
 func _transition_to_level() -> void:
@@ -587,35 +691,387 @@ func _on_continue() -> void:
 	Ads.show_rewarded()
 
 
-func _on_triple() -> void:
+func _bank() -> void:
+	if run_coins > banked:
+		Save.add_coins(run_coins - banked)
+		banked = run_coins
+	if mission_coins > 0:
+		_mission("coins", mission_coins)
+		mission_coins = 0
+
+
+func _mission(id: String, amount := 1) -> void:
+	if Missions.track(id, amount):
+		ui.popup("TASK COMPLETE!", Color("7dffb0"))
+		Sfx.play("star")
+
+
+## Multiplier spin: the player stopped the needle on x`mult`; watch an ad to get it.
+func _on_claim(mult: int) -> void:
+	claim_on_win = state == State.WON
+	if not Ads.is_rewarded_ready():
+		ui.popup("Ad not ready yet", Color("ff9b8b"))
+		ui.resume_spin(claim_on_win)
+		return
+	claim_base = run_coins
+	claim_mult = mult
+	pending_reward = "claim"
+	ui.block(true)
+	Ads.show_rewarded()
+
+
+func _on_free() -> void:
+	if Save.free_seconds_left() > 0:
+		return
 	if not Ads.is_rewarded_ready():
 		ui.popup("Ad not ready yet", Color("ff9b8b"))
 		return
-	pending_reward = "triple"
+	pending_reward = "free"
 	ui.block(true)
 	Ads.show_rewarded()
+
+
+func _on_daily_claim(mult: int) -> void:
+	if mult > 1 and Ads.is_rewarded_ready():
+		daily_mult = mult
+		pending_reward = "daily"
+		ui.block(true)
+		Ads.show_rewarded()
+		return
+	_give_daily(1)
+
+
+func _give_daily(mult: int) -> void:
+	var amount := Save.claim_daily(mult)
+	ui.hide_daily()
+	ui.set_coins(Save.coins)
+	ui.bump_coins()
+	ui.popup("+%s COINS" % GameUI.fmt(amount))
+	world.burst_confetti(boat.global_position + Vector3(0.0, 2.0, 0.0))
+	Sfx.play("buy")
+
+
+func _update_free_button() -> void:
+	var left := Save.free_seconds_left()
+	if left == 0 and not Ads.is_rewarded_ready():
+		left = -1
+	ui.set_free_state(left, FREE_REWARD)
 
 
 func _on_rewarded_finished(earned: bool) -> void:
 	ui.block(false)
 	var what := pending_reward
 	pending_reward = ""
-	if not earned:
-		return
 	match what:
 		"continue":
-			if state == State.DEAD:
+			if earned and state == State.DEAD:
 				_revive()
-		"triple":
-			if state == State.WON:
-				Save.add_pearls(run_pearls * 2)
-				ui.set_pearls(Save.pearls)
-				ui.set_win_pearls(run_pearls * 3)
+		"claim":
+			if earned:
+				var bonus := claim_base * (claim_mult - 1)
+				Save.add_coins(bonus)
+				ui.set_coins(Save.coins)
+				ui.bump_coins()
+				ui.show_claimed(claim_base * claim_mult, claim_on_win)
 				Sfx.play("buy")
-		"shop":
-			Save.add_pearls(SHOP_AD_REWARD)
-			Sfx.play("buy")
-			_refresh_shop()
+				Sfx.vibrate(40)
+			else:
+				ui.resume_spin(claim_on_win)
+		"free":
+			if earned:
+				Save.add_coins(FREE_REWARD)
+				Save.start_free_cooldown(FREE_COOLDOWN)
+				ui.set_coins(Save.coins)
+				ui.bump_coins()
+				ui.popup("+%s COINS" % GameUI.fmt(FREE_REWARD))
+				Sfx.play("buy")
+				if state == State.SHOP:
+					_refresh_shop()
+			_update_free_button()
+		"daily":
+			_give_daily(daily_mult if earned else 1)
+		"race":
+			if earned and not race_doubled:
+				race_doubled = true
+				Save.add_coins(race_reward)
+				ui.set_coins(Save.coins)
+				ui.results_doubled(race_reward * 2)
+				Sfx.play("buy")
+
+
+# =============================================================== menu extras
+
+func _refresh_menu_buttons() -> void:
+	ui.refresh_menu_buttons(Save.player_name, Missions.claimable(), Save.chest_seconds_left(), Save.star_chest_ready())
+
+
+func _show_tasks() -> void:
+	ui.show_tasks(Missions.list(), Missions.bonus_ready(), bool(Save.missions.get("bonus", false)), Missions.ALL_DONE_BONUS)
+
+
+func _on_task_claim(i: int) -> void:
+	var amount := Missions.claim(i)
+	if amount > 0:
+		_reward_fx(amount)
+	_show_tasks()
+	_refresh_menu_buttons()
+
+
+func _on_task_bonus() -> void:
+	var amount := Missions.claim_bonus()
+	if amount > 0:
+		_reward_fx(amount)
+	_show_tasks()
+	_refresh_menu_buttons()
+
+
+func _reward_fx(amount: int) -> void:
+	ui.set_coins(Save.coins)
+	ui.bump_coins()
+	ui.popup("+%s COINS" % GameUI.fmt(amount))
+	Sfx.play("buy")
+	Sfx.vibrate(30)
+
+
+func _show_chests() -> void:
+	ui.show_chests(Save.chest_seconds_left(), Save.star_chest_progress(), Save.star_chest_ready())
+
+
+func _on_chest_open(kind: String) -> void:
+	if kind == "free" and Save.chest_seconds_left() > 0:
+		return
+	if kind == "star" and not Save.star_chest_ready():
+		return
+	var reward := Save.open_chest(kind)
+	ui.set_coins(Save.coins)
+	ui.show_reveal(reward)
+	world.burst_confetti(boat.global_position + Vector3(0.0, 2.0, 0.0))
+	Sfx.play("win")
+	Sfx.vibrate(50)
+	_refresh_menu_buttons()
+
+
+# =============================================================== race
+
+func _show_lobby() -> void:
+	var names: Array = []
+	for id in Net.players:
+		names.append(Net.players[id].name)
+	ui.show_race_lobby(Net.supported(), Net.in_room, Net.is_host, Net.room_code, names, lobby_status)
+
+
+func _on_race_host() -> void:
+	lobby_status = ""
+	var code := Net.host(Save.player_name, Save.boat_cfg())
+	if code != "":
+		lobby_status = "Friends on the same Wi-Fi type this code."
+	_show_lobby()
+
+
+func _on_race_join(code: String) -> void:
+	lobby_status = "Joining..."
+	Net.join(code, Save.player_name, Save.boat_cfg())
+	_show_lobby()
+
+
+func _on_race_start() -> void:
+	if Net.is_host and Net.players.size() >= 2:
+		Net.start(maxi(3, Save.level), randi())
+
+
+func _on_race_leave() -> void:
+	Net.leave()
+	lobby_status = ""
+	ui.race_panel.visible = false
+
+
+func _clear_race() -> void:
+	for r in rivals:
+		r.queue_free()
+	rivals.clear()
+	rivals_by_id.clear()
+	finish_order.clear()
+	race_done_shown = false
+	race_doubled = false
+	race_reward = 0
+	ui.set_race_hud(false, 1, 1, [])
+
+
+func _start_ai_race() -> void:
+	ui.race_panel.visible = false
+	Net.leave()
+	await ui.fade_out(0.25).finished
+	_clear_race()
+	mode = "race_ai"
+	race_level = clampi(Save.level, 3, 30)
+	_setup_run(LevelGen.generate(race_level, randi()), race_level)
+	var skills := [0.16, 0.11, 0.075] if race_level < 10 else [0.12, 0.08, 0.06]
+	for i in 3:
+		var r := Rival.new()
+		add_child(r)
+		var cfg := {"hull": randi() % Custom.count("hull"), "paint": randi() % Custom.count("paint"),
+			"sail": randi() % Custom.count("sail"), "flag": randi() % Custom.count("flag"),
+			"hat": randi() % Custom.count("hat"), "trail": randi() % Custom.count("trail")}
+		r.setup(Save.random_name(), cfg, LANES[i])
+		r.skill = skills[i]
+		rivals.append(r)
+	_race_countdown()
+	ui.fade_in()
+
+
+func _begin_lan_race(lvl: int, race_seed: int) -> void:
+	ui.race_panel.visible = false
+	await ui.fade_out(0.25).finished
+	_clear_race()
+	mode = "race_lan"
+	race_level = lvl
+	_setup_run(LevelGen.generate(lvl, race_seed), lvl)
+	var lane := 0
+	for id in Net.players:
+		if int(id) == Net.my_id():
+			continue
+		var p: Dictionary = Net.players[id]
+		var r := Rival.new()
+		add_child(r)
+		r.setup(String(p.name), p.cfg, LANES[lane % LANES.size()], true)
+		rivals.append(r)
+		rivals_by_id[int(id)] = r
+		lane += 1
+	_race_countdown()
+	ui.fade_in()
+
+
+func _race_countdown() -> void:
+	state = State.COUNTDOWN
+	countdown_left = 3.0
+	cam_mode = "chase"
+	ui.show_hud(race_level)
+	ui.level_label.text = "RACE"
+	ui.set_countdown(3)
+	_update_race_hud()
+
+
+func _race_tick(delta: float) -> void:
+	var racing := state == State.PLAYING or state == State.DEAD or state == State.WON
+	for r in rivals:
+		if mode == "race_ai" and racing and not r.is_remote:
+			if r.simulate(delta, world.items, run_t, speed, rise, fall, world.finish_z):
+				finish_order.append({"name": r.display_name, "me": false, "time": run_t})
+		r.update_visual(delta, t)
+	if mode == "race_lan" and (state == State.PLAYING or state == State.DEAD):
+		net_tick -= delta
+		if net_tick <= 0.0:
+			net_tick = 0.1
+			Net.send_state(boat_z, water_y, holding, state != State.DEAD)
+	if state == State.PLAYING or state == State.DEAD:
+		_update_race_hud()
+
+
+func _standings() -> Array:
+	var rows: Array = []
+	for f in finish_order:
+		rows.append([f.name, f.me, "%.1fs" % float(f.time), 1e9])
+	var racing: Array = []
+	var me_done := false
+	for f in finish_order:
+		if f.me:
+			me_done = true
+	if not me_done:
+		racing.append([Save.player_name, true, "—", boat_z])
+	for r in rivals:
+		var done := false
+		for f in finish_order:
+			if f.name == r.display_name and not f.me:
+				done = true
+		if not done:
+			racing.append([r.display_name, false, "—", r.z])
+	racing.sort_custom(func(a, b): return float(a[3]) > float(b[3]))
+	rows.append_array(racing)
+	return rows
+
+
+func _my_place(rows: Array) -> int:
+	for i in rows.size():
+		if bool(rows[i][1]):
+			return i + 1
+	return rows.size()
+
+
+func _update_race_hud() -> void:
+	var rows := _standings()
+	ui.set_race_hud(true, _my_place(rows), rows.size(), rows)
+
+
+func _race_respawn() -> void:
+	boat_z = LevelGen.respawn_z(world.items, boat_z, speed)
+	for e in world.items:
+		if float(e.z) + float(e.depth) * 0.5 > boat_z - LevelGen.BOAT_HALF_LEN:
+			e.passed = false
+			e.min_clear = LevelGen.NONE_HIGH
+	water_y = LevelGen.WATER_REST + 0.6
+	water_vel = 0.0
+	boat.reset_pose()
+	state = State.COUNTDOWN
+	countdown_left = 0.8
+	ui.popup("RESPAWN", Color("8fe3ff"))
+
+
+func _race_finish() -> void:
+	state = State.WON
+	holding = false
+	cam_mode = "win"
+	finish_order.append({"name": Save.player_name, "me": true, "time": run_t})
+	if mode == "race_lan":
+		Net.send_finished(run_t)
+	var rows := _standings()
+	var place := _my_place(rows)
+	race_reward = RACE_REWARDS[mini(place - 1, RACE_REWARDS.size() - 1)]
+	_bank()
+	Save.add_coins(race_reward)
+	Save.races += 1
+	_mission("races")
+	if place == 1:
+		Save.race_wins += 1
+		_mission("race_win")
+		world.burst_confetti(boat.global_position + Vector3(0.0, 2.5, 3.0))
+		Sfx.play("win")
+	else:
+		Sfx.play("star")
+	Save.save()
+	ui.set_coins(Save.coins)
+	ui.set_race_hud(false, 1, 1, [])
+	await get_tree().create_timer(1.0).timeout
+	if state == State.WON and mode != "levels":
+		race_done_shown = true
+		ui.show_results(place, _standings(), race_reward)
+
+
+func _on_net_state(id: int, z: float, w: float, h: bool, a: bool) -> void:
+	if rivals_by_id.has(id):
+		(rivals_by_id[id] as Rival).net_state(z, w, h, a)
+
+
+func _on_net_finished(id: int, time: float) -> void:
+	if rivals_by_id.has(id):
+		var r: Rival = rivals_by_id[id]
+		r.finished = true
+		finish_order.append({"name": r.display_name, "me": false, "time": time})
+
+
+func _on_race_double() -> void:
+	if race_doubled or not Ads.is_rewarded_ready():
+		return
+	pending_reward = "race"
+	ui.block(true)
+	Ads.show_rewarded()
+
+
+func _on_race_done() -> void:
+	var back_to_lobby := mode == "race_lan" and Net.in_room
+	await _maybe_interstitial()
+	await _transition_to_level()
+	if back_to_lobby:
+		_show_lobby()
 
 
 # =============================================================== shop & settings
@@ -625,50 +1081,50 @@ func _on_boats() -> void:
 		return
 	state = State.SHOP
 	cam_mode = "shop"
-	shop_index = Save.boat
+	_on_shop_tab("hull")
+
+
+func _on_shop_tab(cat: String) -> void:
+	shop_cat = cat
+	shop_index = Save.equipped(cat)
 	_refresh_shop()
 
 
+func _on_shop_pick(i: int) -> void:
+	shop_index = i
+	_refresh_shop()
+
+
+## Preview = what you own/equip, with the selected item tried on.
 func _refresh_shop() -> void:
-	boat.set_model(shop_index)
+	var preview := Save.boat_cfg()
+	preview[shop_cat] = shop_index
+	boat.apply(preview)
 	boat.reset_pose()
-	ui.show_shop(Boat.model_name(shop_index), Boat.price(shop_index), Save.owns(shop_index),
-		Save.boat == shop_index, Save.pearls, Ads.is_rewarded_ready())
-
-
-func _shop_step(dir: int) -> void:
-	shop_index = wrapi(shop_index + dir, 0, Boat.count())
-	_refresh_shop()
+	ui.show_shop(shop_cat, shop_index, Save.coins)
+	_update_free_button()
 
 
 func _on_shop_action() -> void:
-	if Save.owns(shop_index):
-		Save.select(shop_index)
-	elif Save.buy(shop_index):
+	if Save.owns(shop_cat, shop_index):
+		Save.equip(shop_cat, shop_index)
+		Sfx.play("click")
+	elif Save.buy(shop_cat, shop_index):
 		Sfx.play("buy")
 		Sfx.vibrate(40)
 		world.burst_confetti(boat.global_position + Vector3(0.0, 2.0, 0.0))
 	_refresh_shop()
 
 
-func _on_shop_ad() -> void:
-	if not Ads.is_rewarded_ready():
-		ui.popup("Ad not ready yet", Color("ff9b8b"))
-		return
-	pending_reward = "shop"
-	ui.block(true)
-	Ads.show_rewarded()
-
-
 func _on_shop_back() -> void:
-	boat.set_model(Save.boat)
+	boat.apply(Save.boat_cfg())
 	state = State.MENU
 	cam_mode = "menu"
 	_show_menu()
 
 
 func _on_settings() -> void:
-	ui.show_settings(Save.sound, Save.music, Save.vibe)
+	ui.show_settings(Save.sound, Save.music, Save.vibe, Ads.privacy_required())
 
 
 func _on_toggle(key: String, value: bool) -> void:
@@ -682,15 +1138,33 @@ func _on_toggle(key: String, value: bool) -> void:
 
 func _autotest_menus() -> void:
 	_on_boats()
-	for i in Boat.count():
-		_shop_step(1)
-		_on_shop_action()
+	for cat in Custom.CATS:
+		_on_shop_tab(cat)
+		for i in Custom.count(cat):
+			_on_shop_pick(i)
+			_on_shop_action()
 	_on_shop_back()
 	_on_settings()
 	_on_toggle("music", false)
 	_on_toggle("music", true)
+	_on_free()
+	_on_daily_claim(1)
+	_show_tasks()
+	_on_task_claim(0)
+	_on_task_bonus()
+	ui.tasks_panel.visible = false
+	_show_chests()
+	_on_chest_open("free")
+	ui.reveal_panel.visible = false
+	ui.chest_panel.visible = false
+	Save.set_player_name("Auto Tester")
+	_refresh_menu_buttons()
+	_show_lobby()
+	_on_race_host()
+	print("AUTOTEST lobby: in_room=%s code=%s status=%s" % [str(Net.in_room), Net.room_code, lobby_status])
+	_on_race_leave()
 	ui.settings_panel.visible = false
-	print("AUTOTEST menus ok (boats owned: %d)" % Save.owned.count(true))
+	print("AUTOTEST menus ok (workshop items owned: %d, boat %s)" % [Save.owned_count(), str(Save.boat_cfg())])
 	at_wait = 0.3
 
 
@@ -705,6 +1179,12 @@ func _autotest_tick(delta: float) -> void:
 		State.MENU:
 			if at_wait <= 0.0:
 				if level > AT_LEVELS:
+					if not at_raced:
+						at_raced = true
+						print("AUTOTEST race vs AI")
+						_start_ai_race()
+						at_wait = 2.0
+						return
 					print("AUTOTEST PASSED levels=%d crashes=%d frames=%d" % [AT_LEVELS, at_crashes, at_frames])
 					get_tree().quit(0)
 					return
@@ -719,6 +1199,8 @@ func _autotest_tick(delta: float) -> void:
 				_on_resume()
 				print("AUTOTEST pause/resume ok")
 		State.DEAD:
+			if mode != "levels":
+				return
 			if ui.lose_panel.visible and at_wait <= 0.0:
 				at_crashes += 1
 				at_level_crashes += 1
@@ -736,11 +1218,18 @@ func _autotest_tick(delta: float) -> void:
 					_on_retry()
 					at_wait = 1.0
 		State.WON:
+			if mode != "levels":
+				if ui.results_panel.visible and at_wait <= 0.0:
+					print("AUTOTEST race finished: %s" % str(_standings()))
+					_on_race_double()
+					at_wait = 1.5
+					_on_race_done()
+				return
 			if ui.win_panel.visible and at_wait <= 0.0:
 				print("AUTOTEST level %d won, stars=%d pearls=%d/%d" % [level, _stars(), pearls_got, pearls_total])
 				at_wait = 1.0
-				if level % 3 == 0:
-					_on_triple()
+				if level % 2 == 0:
+					_on_claim(ui.win_mult.stop())
 				_on_next()
 
 

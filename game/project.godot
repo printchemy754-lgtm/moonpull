@@ -18,6 +18,7 @@ boot_splash/show_image=false
 Save="*res://scripts/save.gd"
 Ads="*res://scripts/ads.gd"
 Sfx="*res://scripts/sfx.gd"
+Net="*res://scripts/net.gd"
 
 [display]
 
