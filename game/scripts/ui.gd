@@ -323,26 +323,35 @@ func _juice(b: Button) -> void:
 		b.create_tween().tween_property(b, "scale", Vector2.ONE, 0.12).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT))
 
 
+## Rounded counter: [icon][number]. Icon and number sit side by side in a row
+## (a PanelContainer stretches every direct child over its whole area).
 func _pill(icon: String, color: Color) -> Array:
 	var p := PanelContainer.new()
 	var sb := _style(Color(0.08, 0.07, 0.2, 0.75), 30, 0)
-	sb.content_margin_left = 66
-	sb.content_margin_right = 26
+	sb.content_margin_left = 10
+	sb.content_margin_right = 22
 	sb.content_margin_top = 4
 	sb.content_margin_bottom = 4
+	sb.border_width_left = 3
+	sb.border_width_right = 3
+	sb.border_width_top = 3
+	sb.border_width_bottom = 3
+	sb.border_color = Toon.INK
 	p.add_theme_stylebox_override("panel", sb)
 	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	row.alignment = BoxContainer.ALIGNMENT_END
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	p.add_child(row)
+	var ic := IconDraw.new(icon, color)
+	ic.custom_minimum_size = Vector2(48, 48)
+	ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(ic)
 	var l := _label("0", 40, color, 8)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	l.custom_minimum_size = Vector2(80, 56)
-	p.add_child(l)
-	var ic := IconDraw.new(icon, color)
-	ic.set_anchors_preset(Control.PRESET_CENTER_LEFT)
-	ic.offset_left = 10
-	ic.offset_right = 58
-	ic.offset_top = -24
-	ic.offset_bottom = 24
-	p.add_child(ic)
+	l.custom_minimum_size = Vector2(60, 56)
+	row.add_child(l)
 	return [p, l]
 
 
@@ -452,20 +461,21 @@ func _build_hud() -> void:
 	for k in [["boost", "bolt", Color("ffc531")], ["slow", "moon", Color("8fd8ff")], ["shield", "shield", Color("54e0ff")], ["magnet", "magnet", Color("ff4fd8")]]:
 		var chip := PanelContainer.new()
 		var sb := _style(Color(0.08, 0.07, 0.2, 0.7), 26, 0)
-		sb.content_margin_left = 58
-		sb.content_margin_right = 18
+		sb.content_margin_left = 10
+		sb.content_margin_right = 16
 		chip.add_theme_stylebox_override("panel", sb)
 		chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		var l := _label("", 30, k[2], 6)
-		l.custom_minimum_size = Vector2(40, 50)
-		chip.add_child(l)
+		var crow := HBoxContainer.new()
+		crow.add_theme_constant_override("separation", 6)
+		crow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		chip.add_child(crow)
 		var ic := IconDraw.new(k[1], k[2])
-		ic.set_anchors_preset(Control.PRESET_CENTER_LEFT)
-		ic.offset_left = 10
-		ic.offset_right = 50
-		ic.offset_top = -20
-		ic.offset_bottom = 20
-		chip.add_child(ic)
+		ic.custom_minimum_size = Vector2(40, 40)
+		ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		crow.add_child(ic)
+		var l := _label("", 30, k[2], 6)
+		l.custom_minimum_size = Vector2(30, 50)
+		crow.add_child(l)
 		chip.visible = false
 		effects_row.add_child(chip)
 		effect_chips[k[0]] = [chip, l]
