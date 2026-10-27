@@ -8,6 +8,21 @@ const DT := 1.0 / 60.0
 
 
 func _init() -> void:
+	# a player who never steers must crash at almost everything
+	var straight := 0
+	var obstacles := 0
+	for lv in range(1, 21):
+		var d := LevelGen.generate(lv)
+		for e in d.items:
+			if LevelGen.is_obstacle(e.kind) and not e.get("air", false):
+				obstacles += 1
+				var hit := false
+				for k in 12:
+					if LevelGen.clearance(e, k * 0.37, 0.0) + LevelGen.HIT_GRACE < 0.0:
+						hit = true
+				if hit:
+					straight += 1
+	print("going straight hits %d of %d obstacles" % [straight, obstacles])
 	for cfg in [[0.2, 0.2, 8.0], [0.3, 0.35, 6.0], [0.45, 0.5, 4.5]]:
 		var line := "decide %.2fs noise %.2f finger %.1fm/s:" % cfg
 		var lost := 0

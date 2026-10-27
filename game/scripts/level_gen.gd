@@ -76,7 +76,7 @@ static func fall_for(_level: int) -> float:
 
 ## Width of the doors in barriers: wide at first, tighter later.
 static func door_for(level: int) -> float:
-	return clampf(4.2 - (level - 1) * 0.13, 1.75, 4.2)
+	return clampf(3.4 - (level - 1) * 0.09, 1.75, 3.4)
 
 
 static func is_obstacle(kind: String) -> bool:
@@ -358,13 +358,13 @@ static func _wall(doors: Array, width: float) -> Dictionary:
 	return e
 
 
-static func _door_x(width: float, rng: RandomNumberGenerator, avoid := 99.0) -> float:
+## Door centre on the opposite side from where the boat is, never in the
+## middle: you always have to steer (going straight never works).
+static func _door_x(width: float, rng: RandomNumberGenerator, from := 0.0) -> float:
 	var lim := X_MAX + BOAT_HALF_W - width * 0.5 - 0.1
-	for k in 6:
-		var x := rng.randf_range(-lim, lim)
-		if absf(x - avoid) > 1.8:
-			return x
-	return rng.randf_range(-lim, lim)
+	var side := -signf(from) if absf(from) > 0.4 else (1.0 if rng.randf() < 0.5 else -1.0)
+	var min_off := minf(width * 0.5 - BOAT_HALF_W + 0.35, lim)
+	return side * rng.randf_range(min_off, lim)
 
 
 static func _make_pattern(pat: String, door: float, rng: RandomNumberGenerator, before: Array[float]) -> Array[Dictionary]:
@@ -373,6 +373,11 @@ static func _make_pattern(pat: String, door: float, rng: RandomNumberGenerator, 
 	match pat:
 		"wall":
 			out.append(_wall([_door_x(door, rng, before[0])], door))
+			if rng.randf() < 0.35:
+				# a second barrier right after, back the other way
+				var w2 := _wall([_door_x(door, rng, float(out[-1].gx))], door)
+				w2["tight"] = true
+				out.append(w2)
 		"wall_l":
 			out.append(_wall([-lim * 0.7], door))
 		"wall_r":
@@ -391,18 +396,17 @@ static func _make_pattern(pat: String, door: float, rng: RandomNumberGenerator, 
 		"block":
 			var bw := rng.randf_range(2.6, 3.8)
 			var bc := rng.randf_range(-1.8, 1.8)
+			bc = clampf(before[0] + rng.randf_range(-0.8, 0.8), -1.8, 1.8)   # right in your way
 			var b := _item("block")
 			b.blocks = [Vector2(bc - bw * 0.5, bc + bw * 0.5)]
 			b.depth = 1.6
 			out.append(b)
 		"mines":
 			var m := _item("mines")
-			var n := rng.randi_range(2, 3)
-			var spacing := (RIVER_W - 1.0) / n
-			var shift := rng.randf_range(-0.6, 0.6)
-			for k in n:
-				var mx := -RIVER_W * 0.5 + 0.5 + spacing * (k + 0.5) + shift
-				m.blocks.append(Vector2(mx - 0.55, mx + 0.55))
+			var shift := clampf(before[0], -0.5, 0.5) + rng.randf_range(-0.3, 0.3)   # one orb where you are
+			for k in [-1, 0, 1]:
+				var mx: float = k * 2.7 + shift
+				m.blocks.append(Vector2(mx - 0.45, mx + 0.45))
 			m.depth = 1.0
 			out.append(m)
 		"slider":

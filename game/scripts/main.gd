@@ -218,7 +218,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event is InputEventMouseMotion:
 		if holding and (state == State.PLAYING or state == State.COUNTDOWN):
-			steer_target = clampf(steer_target + event.relative.x * STEER_SENS, -LevelGen.X_MAX, LevelGen.X_MAX)
+			# the camera looks down +Z, so screen-right is world -X
+			steer_target = clampf(steer_target - event.relative.x * STEER_SENS, -LevelGen.X_MAX, LevelGen.X_MAX)
 		return
 	var is_press := false
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
@@ -276,7 +277,7 @@ func _process(delta: float) -> void:
 	else:
 		if holding and not (Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) or Input.is_key_pressed(KEY_SPACE)):
 			holding = false
-		var kd := float(Input.is_key_pressed(KEY_RIGHT) or Input.is_key_pressed(KEY_D)) - float(Input.is_key_pressed(KEY_LEFT) or Input.is_key_pressed(KEY_A))
+		var kd := float(Input.is_key_pressed(KEY_LEFT) or Input.is_key_pressed(KEY_A)) - float(Input.is_key_pressed(KEY_RIGHT) or Input.is_key_pressed(KEY_D))
 		if kd != 0.0 and (state == State.PLAYING or state == State.COUNTDOWN):
 			steer_target = clampf(steer_target + kd * KEY_STEER * delta, -LevelGen.X_MAX, LevelGen.X_MAX)
 	if state != State.PAUSED:
@@ -860,7 +861,7 @@ func _tutorial() -> void:
 	var short := level > 2
 	if LevelGen.clearance(e, run_t + eta, boat_x) > 0.05:
 		ui.hide_hint()
-	elif go < boat_x:
+	elif go > boat_x:
 		ui.hint("SLIDE LEFT!" if short else "SLIDE YOUR FINGER LEFT", "left")
 	else:
 		ui.hint("SLIDE RIGHT!" if short else "SLIDE YOUR FINGER RIGHT", "right")

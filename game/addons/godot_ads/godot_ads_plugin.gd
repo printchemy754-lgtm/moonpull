@@ -38,3 +38,14 @@ class AndroidExportPlugin extends EditorExportPlugin:
 
 	func _get_android_dependencies(platform: EditorExportPlatform, debug: bool) -> PackedStringArray:
 		return PackedStringArray(DEPENDENCIES)
+
+	## AdMob and Firebase Analytics both declare this property with different
+	## files, which breaks the manifest merge. Added to the GAME's manifest
+	## (where AdMob's resource exists) so AdMob's value wins.
+	func _get_android_manifest_application_element_contents(platform: EditorExportPlatform, debug: bool) -> String:
+		return """
+		<property
+			android:name="android.adservices.AD_SERVICES_CONFIG"
+			android:resource="@xml/gma_ad_services_config"
+			tools:replace="android:resource" />
+"""
