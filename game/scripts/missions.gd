@@ -11,6 +11,8 @@ const POOL := [
 	{"id": "races", "text": "Finish %s races", "targets": [1, 2, 3], "reward": [200, 300, 450]},
 	{"id": "race_win", "text": "Win %s race", "targets": [1, 1, 2], "reward": [400, 400, 700]},
 	{"id": "endless", "text": "Score %s total in Endless", "targets": [300, 600, 1000], "reward": [200, 350, 600]},
+	{"id": "fever", "text": "Trigger FEVER %s times", "targets": [2, 4, 6], "reward": [250, 400, 600]},
+	{"id": "smash", "text": "Smash %s obstacles in FEVER", "targets": [5, 10, 20], "reward": [200, 350, 550]},
 ]
 const ALL_DONE_BONUS := 500
 

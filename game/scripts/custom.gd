@@ -5,7 +5,7 @@ extends RefCounted
 
 const CATS := ["hull", "paint", "sail", "flag", "hat", "trail", "wall"]
 const CAT_NAMES := {
-	"hull": "BOAT", "paint": "PAINT", "sail": "GLOW", "flag": "FLAG", "hat": "HAT", "trail": "WAKE", "wall": "WALLS",
+	"hull": "BOAT", "paint": "PAINT", "sail": "SAILS", "flag": "FLAG", "hat": "HAT", "trail": "WAKE", "wall": "WALLS",
 }
 ## Equip slots -> the category whose items they use. Walls: one purchase, two slots.
 const SLOTS := {
@@ -108,7 +108,7 @@ static func _build() -> void:
 		{"name": "SKIMMER", "price": 0},
 		{"name": "HAULER", "price": 2000},
 		{"name": "INTERCEPTOR", "price": 5000},
-		{"name": "SOLAR SAIL", "price": 10000},
+		{"name": "SOLAR JUNK", "price": 10000},
 		{"name": "ROBO DUCK", "price": 18000},
 		{"name": "MOON SKIFF", "price": 30000},
 	]
@@ -118,9 +118,7 @@ static func _build() -> void:
 	var sails := _palette([500, 500, 500, 500, 800, 800, 0, 1200, 1500, 2000])
 	var white: Dictionary = sails[6]
 	sails.remove_at(6)
-	sails.insert(0, {"name": "CYAN", "color": Color("00e5ff"), "price": 0})
-	sails.insert(1, white)
-	white.price = 500
+	sails.insert(0, white)
 	sails.append({"name": "GALAXY", "color": Color("6a3dff"), "price": -1, "unlock": "rank:30"})
 	_items["sail"] = sails
 	_items["flag"] = [
@@ -134,16 +132,16 @@ static func _build() -> void:
 		{"name": "CHAMPION", "a": Color("ffc531"), "b": Color("e8433a"), "pattern": "cross", "price": -1, "unlock": "rank:15"},
 	]
 	_items["hat"] = [
-		{"name": "PILOT", "kind": "cap", "price": 0},
-		{"name": "HEADSET", "kind": "beanie", "price": 800},
-		{"name": "VISOR CAP", "kind": "straw", "price": 1500},
-		{"name": "ANTENNA", "kind": "party", "price": 2500},
-		{"name": "MOHAWK", "kind": "top", "price": 4000},
-		{"name": "HALO CROWN", "kind": "crown", "price": 9000},
-		{"name": "CYBER PIRATE", "kind": "pirate", "price": -1, "unlock": "rank:10"},
+		{"name": "CAPTAIN", "kind": "cap", "price": 0},
+		{"name": "BEANIE", "kind": "beanie", "price": 800},
+		{"name": "STRAW HAT", "kind": "straw", "price": 1500},
+		{"name": "PARTY", "kind": "party", "price": 2500},
+		{"name": "TOP HAT", "kind": "top", "price": 4000},
+		{"name": "CROWN", "kind": "crown", "price": 9000},
+		{"name": "PIRATE", "kind": "pirate", "price": -1, "unlock": "rank:10"},
 	]
 	_items["trail"] = [
-		{"name": "PLASMA", "a": Color("8ff4ff"), "b": Color("ffffff"), "price": 0},
+		{"name": "FOAM", "a": Color(1, 1, 1), "b": Color(1, 1, 1), "price": 0},
 		{"name": "GOLD", "a": Color("ffd23f"), "b": Color("ff9a1f"), "price": 2000},
 		{"name": "CANDY", "a": Color("ff7ac8"), "b": Color("ffffff"), "price": 2000},
 		{"name": "ICE", "a": Color("8fe3ff"), "b": Color("ffffff"), "price": 3000},

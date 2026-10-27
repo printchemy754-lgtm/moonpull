@@ -20,6 +20,12 @@ var confetti: CPUParticles3D
 var ambient: CPUParticles3D
 var raft: Node3D
 var chest_lid: Node3D
+var boss: Node3D
+var boss_eye_mat: StandardMaterial3D
+var boss_beam: MeshInstance3D
+var boss_beam_t := 0.0
+var boss_fire_t := 2.0
+var boss_alive := false
 
 var items: Array[Dictionary] = []
 var pearls: Array[Dictionary] = []
@@ -74,6 +80,9 @@ func build_level(data: Dictionary, level: int, wall_left := "canyon", wall_right
 	ambient = null
 	raft = null
 	chest_lid = null
+	boss = null
+	boss_beam = null
+	boss_alive = false
 	_mats.clear()
 	theme = Themes.for_level(level)
 	_apply_theme()
@@ -100,6 +109,8 @@ func build_level(data: Dictionary, level: int, wall_left := "canyon", wall_right
 	_spawn_floor(_wall_len)
 	set_walls(wall_left, wall_right)
 	_spawn_ambient()
+	if String(data.get("special", "")) == "boss":
+		_spawn_boss()
 
 
 func set_walls(left: String, right: String) -> void:
@@ -264,11 +275,11 @@ func _apply_theme() -> void:
 	sun.rotation_degrees = theme.sun_rot
 	water_mat.set_shader_parameter("deep_color", theme.water_deep)
 	water_mat.set_shader_parameter("shallow_color", theme.water_shallow)
-	water_mat.set_shader_parameter("grid_color", theme.get("grid", Color("00e5ff")))
-	water_mat.set_shader_parameter("edge_color", theme.get("neon", Color("ff2fd0")))
-	moon_ring_mat.albedo_color = Color(theme.get("neon2", Color.WHITE), 0.6)
+	water_mat.set_shader_parameter("grid_color", theme.get("grid", Color("ff2fd0")))
+	water_mat.set_shader_parameter("edge_color", theme.get("edge", Color("00e5ff")))
 	moon_mat.albedo_color = theme.moon
 	moon_mat.emission = theme.moon
+	moon_ring_mat.albedo_color = theme.get("neon2", Color("00e5ff"))
 
 
 func _build_water() -> void:
@@ -300,32 +311,43 @@ func _build_moon() -> void:
 	moon.material_override = moon_mat
 	moon.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(moon)
-	# planetary ring: the "Moonpull" moon in a sci-fi sky
-	var ring := TorusMesh.new()
-	ring.inner_radius = 5.4
-	ring.outer_radius = 6.6
-	ring.rings = 48
-	ring.ring_segments = 4
+	# synthwave bands across the planet
+	var band := StandardMaterial3D.new()
+	band.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	band.albedo_color = Color(0.23, 0.06, 0.35)
+	band.set("disable_fog", true)
+	for k in 3:
+		var by := -0.6 - k * 0.95
+		var r := sqrt(maxf(16.0 - by * by, 0.1))
+		var bm := CylinderMesh.new()
+		bm.top_radius = r + 0.02
+		bm.bottom_radius = r + 0.02
+		bm.height = 0.18 + k * 0.1
+		bm.radial_segments = 32
+		bm.rings = 1
+		var mi := MeshInstance3D.new()
+		mi.mesh = bm
+		mi.material_override = band
+		mi.position.y = by
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		moon.add_child(mi)
+	# neon planetary ring
 	moon_ring_mat = StandardMaterial3D.new()
 	moon_ring_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	moon_ring_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	moon_ring_mat.albedo_color = Color(0.0, 0.9, 1.0, 0.6)
+	moon_ring_mat.albedo_color = Color("00e5ff")
 	moon_ring_mat.set("disable_fog", true)
+	var ring := TorusMesh.new()
+	ring.inner_radius = 6.0
+	ring.outer_radius = 6.5
+	ring.rings = 48
+	ring.ring_segments = 6
 	var rmi := MeshInstance3D.new()
 	rmi.mesh = ring
 	rmi.material_override = moon_ring_mat
-	rmi.rotation = Vector3(1.2, 0.0, 0.35)
-	rmi.scale = Vector3(1.0, 0.12, 1.0)
+	rmi.scale = Vector3(1.0, 0.25, 1.0)
+	rmi.rotation = Vector3(0.25, 0.0, -0.25)
 	rmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	moon.add_child(rmi)
-	# a few craters
-	var crater := StandardMaterial3D.new()
-	crater.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	crater.albedo_color = Color(0.85, 0.82, 0.75)
-	crater.set("disable_fog", true)
-	for c in [Vector3(-1.2, 1.0, -3.6), Vector3(1.4, -0.6, -3.65), Vector3(0.2, -1.8, -3.5), Vector3(-1.8, -1.2, -3.3)]:
-		var cr := _ball(moon, 0.55, c, crater, Vector3(1.0, 1.0, 0.3))
-		cr.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 
 func _burst_particles(amount: int, life: float, gravity: Vector3, v_min: float, v_max: float,
@@ -399,6 +421,13 @@ func _spawn_item(e: Dictionary) -> void:
 			e["foam"] = _foam(root)
 		"drawbridge":
 			_build_drawbridge(root, e)
+		"slider":
+			_build_slider(root, e)
+			e["foam"] = _foam(root)
+		"mine":
+			_build_mine(root, e)
+		"geyser", "vortex":
+			_build_current(root, e)
 		"boost", "slow":
 			_build_ring(root, e)
 		"shield", "magnet":
@@ -467,7 +496,7 @@ func _build_drawbridge(root: Node3D, e: Dictionary) -> void:
 	var metal := _mat("gantry", theme.wood, 0.5)
 	var dark := _mat("gantry_dark", theme.wood_dark, 0.6)
 	var lamp := _mat("lamp", theme.lamp, 0.3, 2.6, 0.02)
-	var tower := _mat("tower", theme.metal if theme.has("metal") else theme.rock, 0.5)
+	var tower := _mat("tower", theme.get("metal", theme.rock), 0.5)
 	var neon := _mat("neon_strip", theme.get("neon", theme.lamp), 0.2, 3.0, 0.0)
 	var top: float = e.b + 2.2
 	for s in [-1.0, 1.0]:
@@ -491,6 +520,137 @@ func _build_drawbridge(root: Node3D, e: Dictionary) -> void:
 		chains.append(c)
 	e["chains"] = chains
 	e["chain_top"] = top - 0.3
+
+
+## Moving gate: energy fence + deck ride up and down together.
+func _build_slider(root: Node3D, e: Dictionary) -> void:
+	var metal := _mat("gantry", theme.wood, 0.5)
+	var dark := _mat("gantry_dark", theme.wood_dark, 0.6)
+	var lamp := _mat("lamp", theme.lamp, 0.3, 2.6, 0.02)
+	var tower := _mat("tower", theme.metal if theme.has("metal") else theme.rock, 0.5)
+	var neon := _mat("neon_strip", theme.get("neon", theme.lamp), 0.2, 3.0, 0.0)
+	var amp: float = e.amp
+	var top: float = float(e.b) + amp + 1.6
+	for sx in [-1.0, 1.0]:
+		var th := top - LevelGen.FLOOR_Y
+		var tx: float = sx * (LevelGen.RIVER_W * 0.5 + 0.7)
+		_box(root, Vector3(1.0, th, 1.5), Vector3(tx, LevelGen.FLOOR_Y + th * 0.5, 0.0), tower)
+		# rail the gate rides on
+		_box(root, Vector3(0.12, th * 0.95, 0.12), Vector3(tx - sx * 0.56, LevelGen.FLOOR_Y + th * 0.5, 0.0), neon)
+		_ball(root, 0.24, Vector3(tx, top + 0.2, 0.0), lamp)
+	var mover := Node3D.new()
+	root.add_child(mover)
+	_build_reef(mover, e.h, amp + 0.6)
+	_deck(mover, e.b, LevelGen.RIVER_W - 0.2, metal, dark, lamp)
+	for sx2 in [-1.0, 1.0]:
+		# glowing arrows that show it moves
+		var pr := PrismMesh.new()
+		pr.size = Vector3(0.5, 0.45, 0.1)
+		var m1 := _mi(mover, pr, _mat("slider_arrow", theme.get("neon2", Color.WHITE), 0.2, 3.0, 0.0), Vector3(sx2 * 3.0, (float(e.h) + float(e.b)) * 0.5 + 0.35, -0.75))
+		m1.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		var m2 := _mi(mover, pr, _mat("slider_arrow", theme.get("neon2", Color.WHITE), 0.2, 3.0, 0.0), Vector3(sx2 * 3.0, (float(e.h) + float(e.b)) * 0.5 - 0.35, -0.75), Vector3(0.0, 0.0, PI))
+		m2.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	e["mover"] = mover
+
+
+## Plasma mines: a glowing band across the river. Pass above OR below it.
+func _build_mine(root: Node3D, e: Dictionary) -> void:
+	var c := (float(e.m0) + float(e.m1)) * 0.5
+	var r := (float(e.m1) - float(e.m0)) * 0.5
+	var core := _mat("mine_core", Color("ff3d5a"), 0.3, 3.5, 0.03)
+	var shell := _mat("mine_shell", Color("2a2140"), 0.4)
+	var spike := _mat("mine_spike", Color("ffd166"), 0.3, 1.5, 0.02)
+	var spin := Node3D.new()
+	spin.position = Vector3(0.0, c, 0.0)
+	root.add_child(spin)
+	var count := 4
+	for i in count:
+		var x := lerpf(-LevelGen.RIVER_W * 0.5 + 1.0, LevelGen.RIVER_W * 0.5 - 1.0, float(i) / (count - 1))
+		var orb := Node3D.new()
+		orb.position = Vector3(x, 0.0, 0.0)
+		spin.add_child(orb)
+		_ball(orb, r * 0.95, Vector3.ZERO, shell)
+		_ball(orb, r * 0.55, Vector3(0.0, 0.0, -r * 0.6), core)
+		for k in 6:
+			var a := TAU * k / 6.0
+			var dir := Vector3(cos(a), sin(a), 0.0)
+			_cone(orb, 0.11, 0.0, r * 0.7, dir * r * 1.1, spike, 4, Vector3(0.0, 0.0, a - PI * 0.5))
+	# the plasma link between orbs = the danger band
+	var beam := CylinderMesh.new()
+	beam.top_radius = r * 0.42
+	beam.bottom_radius = r * 0.42
+	beam.height = LevelGen.RIVER_W + 0.6
+	beam.radial_segments = 8
+	beam.rings = 1
+	var link := _mi(spin, beam, _fx_mat("mine_link", Color(1.0, 0.25, 0.45, 0.55), 2.5), Vector3.ZERO, Vector3(0.0, 0.0, PI * 0.5))
+	link.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	for sx in [-1.0, 1.0]:
+		_box(root, Vector3(0.5, 0.9, 0.9), Vector3(sx * (LevelGen.RIVER_W * 0.5 + 0.2), c, 0.0), _mat("mine_emitter", theme.get("metal", Color("3a3f6a")), 0.5))
+	e["spinner"] = spin
+
+
+## Geyser (up) / vortex (down): a glowing pad on the water surface.
+func _build_current(root: Node3D, e: Dictionary) -> void:
+	var up: bool = e.kind == "geyser"
+	var col := Color("54e0ff") if up else Color("ff4fd8")
+	var pad := Node3D.new()
+	root.add_child(pad)
+	for k in 3:
+		var rad := 1.0 + k * 1.1
+		_torus(pad, rad, rad + 0.16, Vector3(0.0, 0.04, 0.0), _fx_mat("cur_ring_" + e.kind, Color(col, 0.85), 3.0))
+	var disc := CylinderMesh.new()
+	disc.top_radius = 3.4
+	disc.bottom_radius = 3.4
+	disc.height = 0.02
+	disc.radial_segments = 24
+	disc.rings = 1
+	_mi(pad, disc, _fx_mat("cur_disc_" + e.kind, Color(col, 0.22), 1.0), Vector3(0.0, 0.02, 0.0))
+	for k in 3:
+		var pr := PrismMesh.new()
+		pr.size = Vector3(0.9, 0.7, 0.18)
+		var arrow := _mi(pad, pr, _fx_mat("cur_arrow_" + e.kind, Color(col, 0.95), 3.0), Vector3(0.0, 0.8 + k * 0.85, 0.0), Vector3(0.0, 0.0, 0.0 if up else PI))
+		arrow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var jet := CPUParticles3D.new()
+	jet.amount = 26
+	jet.lifetime = 0.9
+	jet.local_coords = true
+	jet.emission_shape = CPUParticles3D.EMISSION_SHAPE_RING
+	jet.emission_ring_axis = Vector3.UP
+	jet.emission_ring_radius = 2.4
+	jet.emission_ring_inner_radius = 0.5
+	jet.emission_ring_height = 0.1
+	jet.direction = Vector3.UP if up else Vector3.DOWN
+	jet.spread = 8.0
+	jet.initial_velocity_min = 3.0 if up else 0.5
+	jet.initial_velocity_max = 5.0 if up else 1.0
+	jet.gravity = Vector3(0.0, -3.0, 0.0)
+	if not up:
+		jet.position.y = 2.5
+		jet.tangential_accel_min = 6.0
+		jet.tangential_accel_max = 8.0
+		jet.radial_accel_min = -4.0
+		jet.radial_accel_max = -3.0
+	var sp := SphereMesh.new()
+	sp.radius = 0.12
+	sp.height = 0.24
+	sp.radial_segments = 6
+	sp.rings = 3
+	jet.mesh = sp
+	jet.material_override = _fx_mat("cur_jet_" + e.kind, Color(col, 0.9), 3.0)
+	pad.add_child(jet)
+	e["pad"] = pad
+	e["jet"] = jet
+
+
+## The boat hit a geyser / vortex.
+func trigger_current(e: Dictionary) -> void:
+	if not e.has("pad") or e.get("gone", false):
+		return
+	var pad: Node3D = e.pad
+	burst_splash(pad.global_position + Vector3(0.0, 0.5, 0.0))
+	var tw := create_tween()
+	tw.tween_property(pad, "scale", Vector3(1.6, 2.5 if e.kind == "geyser" else 0.3, 1.6), 0.15)
+	tw.tween_property(pad, "scale", Vector3.ONE, 0.4)
 
 
 func _build_ring(root: Node3D, e: Dictionary) -> void:
@@ -559,7 +719,7 @@ func _make_coin_mesh() -> ArrayMesh:
 	return st.commit()
 
 
-## Warp gate: a neon arch over the river + a floating holo-crate.
+## Finish: a neon warp arch, and a holo-crate that opens when you win.
 func _spawn_finish(z: float) -> void:
 	var root := Node3D.new()
 	root.position = Vector3(0.0, 0.0, z)
@@ -573,35 +733,37 @@ func _spawn_finish(z: float) -> void:
 	for k in segs:
 		var a0 := PI * k / segs
 		var a1 := PI * (k + 1) / segs
-		var p0 := Vector3(cos(a0) * r, base_y + sin(a0) * r * 1.5, 0.0)
-		var p1 := Vector3(cos(a1) * r, base_y + sin(a1) * r * 1.5, 0.0)
+		var p0 := Vector3(cos(a0) * r, base_y + sin(a0) * r * 1.25, 0.0)
+		var p1 := Vector3(cos(a1) * r, base_y + sin(a1) * r * 1.25, 0.0)
 		var mid := (p0 + p1) * 0.5
-		var length := p0.distance_to(p1)
+		var length := p0.distance_to(p1) + 0.05
 		var ang := atan2(p1.y - p0.y, p1.x - p0.x)
-		_box(root, Vector3(length + 0.05, 0.55, 0.9), mid, metal, Vector3(0.0, 0.0, ang))
-		_box(root, Vector3(length + 0.05, 0.14, 1.0), mid + Vector3(0.0, 0.0, 0.0), neon if k % 2 == 0 else neon2, Vector3(0.0, 0.0, ang))
+		_box(root, Vector3(length, 0.7, 1.0), mid, metal, Vector3(0.0, 0.0, ang))
+		_box(root, Vector3(length, 0.14, 1.06), mid + Vector3(0.0, 0.0, 0.0), neon if k % 2 == 0 else neon2, Vector3(0.0, 0.0, ang))
 	for s in [-1.0, 1.0]:
-		_box(root, Vector3(1.1, 1.0 - LevelGen.FLOOR_Y, 1.4), Vector3(s * r, (1.0 + LevelGen.FLOOR_Y) * 0.5 - 0.2, 0.0), metal)
-	# holo-crate reward (opens when you win)
+		var x: float = s * r
+		_box(root, Vector3(1.0, 1.4 - LevelGen.FLOOR_Y, 1.4), Vector3(x, (LevelGen.FLOOR_Y + 1.2) * 0.5, 0.0), metal)
+		_box(root, Vector3(0.1, 1.0, 1.45), Vector3(x - s * 0.5, 0.7, 0.0), neon2)
+	# FINISH holo strip
+	for k in 10:
+		var bx := lerpf(-LevelGen.RIVER_W * 0.5 + 0.9, LevelGen.RIVER_W * 0.5 - 0.9, k / 9.0)
+		var sq := _box(root, Vector3(0.62, 0.6, 0.05), Vector3(bx, r * 1.25 - 0.6, 0.0), _fx_mat("chk_a", Color(1, 1, 1, 0.85), 2.0) if k % 2 == 0 else _fx_mat("chk_b", Color(0.05, 0.05, 0.15, 0.7)))
+		sq.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# holo crate on a hover pad (floats on the tide, opens when you win)
 	raft = Node3D.new()
 	raft.position = Vector3(-2.4, 0.0, z + 9.0)
 	level_root.add_child(raft)
-	var pad := CylinderMesh.new()
-	pad.top_radius = 1.0
-	pad.bottom_radius = 1.1
-	pad.height = 0.2
-	pad.radial_segments = 6
-	_mi(raft, pad, metal, Vector3(0.0, 0.05, 0.0))
-	_box(raft, Vector3(2.1, 0.05, 0.05), Vector3(0.0, 0.17, 0.0), neon2, Vector3(0.0, 0.5, 0.0))
-	var crate := _mat("crate", Color("2a2f5a"), 0.5)
-	var gold := _mat("gold", Color("ffc531"), 0.3, 1.2, 0.02)
+	_cone(raft, 1.1, 1.1, 0.16, Vector3(0.0, 0.08, 0.0), metal, 8)
+	_torus(raft, 1.0, 1.15, Vector3(0.0, 0.1, 0.0), neon2)
+	var crate := _mat("crate", Color("20223a"), 0.5)
+	var gold := _mat("gold", Color("ffc531"), 0.3, 1.5)
 	_box(raft, Vector3(0.9, 0.5, 0.65), Vector3(0.0, 0.45, 0.0), crate)
 	_box(raft, Vector3(0.95, 0.06, 0.7), Vector3(0.0, 0.45, 0.0), gold)
 	chest_lid = Node3D.new()
 	chest_lid.position = Vector3(0.0, 0.7, -0.32)
 	raft.add_child(chest_lid)
 	_box(chest_lid, Vector3(0.9, 0.2, 0.65), Vector3(0.0, 0.1, 0.32), crate)
-	_box(chest_lid, Vector3(0.95, 0.05, 0.7), Vector3(0.0, 0.18, 0.32), gold)
+	_box(chest_lid, Vector3(0.95, 0.05, 0.7), Vector3(0.0, 0.19, 0.32), neon)
 
 
 # ------------------------------------------------------------------ canyon & decoration
@@ -632,27 +794,26 @@ func _spawn_ambient() -> void:
 			ambient.initial_velocity_max = 0.4
 			ambient.spread = 180.0
 			ambient.material_override = _fx_mat("amb_ff", Color.WHITE, 3.0)
+		"motes":
+			var mc: Color = theme.get("neon2", Color("00e5ff"))
+			g.set_color(0, Color(mc, 0.0))
+			g.set_color(1, Color(mc, 0.0))
+			g.add_point(0.5, Color(mc, 1.0))
+			ambient.gravity = Vector3(0.0, 0.3, 0.0)
+			ambient.initial_velocity_max = 0.3
+			ambient.spread = 180.0
+			ambient.material_override = _fx_mat("amb_mote", Color.WHITE, 3.0)
+		"stars":
+			g.set_color(0, Color(1.0, 1.0, 1.0, 0.0))
+			g.set_color(1, Color(1.0, 1.0, 1.0, 0.0))
+			g.add_point(0.5, Color(0.8, 0.9, 1.0, 1.0))
+			ambient.gravity = Vector3.ZERO
+			ambient.material_override = _fx_mat("amb_star", Color.WHITE, 3.0)
 		"snow":
 			g.set_color(0, Color(1.0, 1.0, 1.0, 0.9))
 			g.set_color(1, Color(1.0, 1.0, 1.0, 0.0))
 			ambient.gravity = Vector3(0.3, -1.2, 0.0)
 			ambient.material_override = _fx_mat("amb_snow", Color.WHITE)
-		"motes":
-			var c: Color = theme.get("neon2", Color("00e5ff"))
-			g.set_color(0, Color(c, 0.0))
-			g.set_color(1, Color(c, 0.0))
-			g.add_point(0.5, Color(c, 1.0))
-			ambient.gravity = Vector3(0.0, 0.5, 0.0)
-			ambient.initial_velocity_max = 0.3
-			ambient.spread = 180.0
-			ambient.material_override = _fx_mat("amb_motes", Color.WHITE, 3.0)
-		"stars":
-			g.set_color(0, Color(1, 1, 1, 0.0))
-			g.set_color(1, Color(1, 1, 1, 0.0))
-			g.add_point(0.5, Color(1, 1, 1, 1.0))
-			ambient.gravity = Vector3.ZERO
-			ambient.emission_box_extents = Vector3(14.0, 8.0, 40.0)
-			ambient.material_override = _fx_mat("amb_stars", Color.WHITE, 2.0)
 		"embers":
 			g.set_color(0, Color(1.0, 0.6, 0.2, 1.0))
 			g.set_color(1, Color(1.0, 0.3, 0.1, 0.0))
@@ -677,6 +838,8 @@ func update(delta: float, run_t: float, t: float, water_y: float, boat_z: float,
 		raft.rotation.z = sin(t * 1.3) * 0.04
 
 	_stream(boat_z)
+	if boss:
+		_update_boss(delta, t, water_y, boat_z)
 	var near := boat_z - 25.0
 	var far := boat_z + 110.0
 	for i in range(maxi(_next_item - 60, 0), _next_item):
@@ -698,6 +861,21 @@ func update(delta: float, run_t: float, t: float, water_y: float, boat_z: float,
 					var length := maxf(top - (by + 0.5), 0.05)
 					ch.position.y = by + 0.5 + length * 0.5
 					ch.scale = Vector3(1.0, length, 1.0)
+			"slider":
+				var sm: Node3D = e.mover
+				sm.position.y = LevelGen.h_at(e, run_t) - float(e.h)
+			"mine":
+				if not e.get("smashed", false):
+					var ms: Node3D = e.spinner
+					for orb in ms.get_children():
+						if orb is Node3D and not (orb is MeshInstance3D):
+							(orb as Node3D).rotation.z += delta * 2.5
+					var pulse := 1.0 + sin(t * 6.0 + z) * 0.06
+					ms.scale = Vector3(1.0, pulse, pulse)
+			"geyser", "vortex":
+				var pd: Node3D = e.pad
+				pd.position.y = water_y
+				pd.rotation.y += delta * (1.5 if e.kind == "geyser" else -3.0)
 			"boost", "slow", "shield", "magnet":
 				if not e.taken:
 					var sp: Node3D = e.spinner
@@ -721,6 +899,122 @@ func update(delta: float, run_t: float, t: float, water_y: float, boat_z: float,
 		var n: Node3D = p.node
 		n.rotation.y += delta * 3.2
 		n.position.y = float(p.y) + sin(t * 3.0 + pz) * 0.12
+
+
+# ================================================================== boss
+
+## The world's boss: a neon mothership that flies ahead of you. Every obstacle
+## you pass fires your boat's laser at it.
+func _spawn_boss() -> void:
+	boss = Node3D.new()
+	level_root.add_child(boss)
+	boss_alive = true
+	var hull := _mat("boss_hull", Color("1b1530"), 0.5, 0.0, 0.05)
+	var plate := _mat("boss_plate", theme.get("metal", Color("3a3f6a")), 0.5, 0.0, 0.04)
+	var neon := _mat("boss_neon", theme.get("neon", Color("ff2fd0")), 0.2, 3.5, 0.0)
+	var neon2 := _mat("boss_neon2", theme.get("neon2", Color("00e5ff")), 0.2, 3.5, 0.0)
+	_ball(boss, 2.6, Vector3.ZERO, hull, Vector3(1.6, 0.45, 1.25))
+	_ball(boss, 1.5, Vector3(0.0, 0.75, 0.2), plate, Vector3(1.2, 0.6, 1.0))
+	_torus(boss, 3.9, 4.25, Vector3(0.0, -0.05, 0.0), neon)
+	_torus(boss, 2.0, 2.2, Vector3(0.0, -0.9, 0.0), neon2)
+	for sx in [-1.0, 1.0]:
+		_box(boss, Vector3(2.4, 0.25, 1.2), Vector3(sx * 4.6, 0.0, 0.3), plate, Vector3(0.0, 0.0, sx * -0.25))
+		_cone(boss, 0.35, 0.25, 1.8, Vector3(sx * 2.6, -0.6, -1.6), plate, 8, Vector3(PI * 0.5, 0.0, 0.0))
+		_ball(boss, 0.3, Vector3(sx * 2.6, -0.6, -2.55), neon)
+	boss_eye_mat = StandardMaterial3D.new()
+	boss_eye_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	boss_eye_mat.albedo_color = Color("ff3d5a")
+	_ball(boss, 0.85, Vector3(0.0, -0.15, -3.1), boss_eye_mat, Vector3(1.3, 0.7, 0.6))
+	var lights := CPUParticles3D.new()
+	lights.amount = 30
+	lights.lifetime = 0.8
+	lights.position = Vector3(0.0, -1.1, 0.0)
+	lights.direction = Vector3.DOWN
+	lights.spread = 25.0
+	lights.initial_velocity_min = 3.0
+	lights.initial_velocity_max = 5.0
+	var lm := SphereMesh.new()
+	lm.radius = 0.1
+	lm.height = 0.2
+	lm.radial_segments = 4
+	lm.rings = 2
+	lights.mesh = lm
+	lights.material_override = _fx_mat("boss_exhaust", Color(theme.get("neon2", Color("00e5ff")), 0.8), 3.0)
+	boss.add_child(lights)
+	var bm := CylinderMesh.new()
+	bm.top_radius = 0.09
+	bm.bottom_radius = 0.09
+	bm.height = 1.0
+	bm.radial_segments = 6
+	bm.rings = 1
+	boss_beam = MeshInstance3D.new()
+	boss_beam.mesh = bm
+	boss_beam.material_override = _fx_mat("boss_beam", Color(0.4, 1.0, 1.0, 0.9), 4.0)
+	boss_beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	boss_beam.visible = false
+	level_root.add_child(boss_beam)
+
+
+func _update_boss(delta: float, t: float, water_y: float, boat_z: float) -> void:
+	if boss_alive:
+		boss.position = Vector3(sin(t * 0.7) * 1.6, 9.5 + water_y * 0.3 + sin(t * 1.3) * 0.5, boat_z + 26.0)
+		boss.rotation = Vector3(0.08, sin(t * 0.5) * 0.15, sin(t * 0.7) * -0.08)
+		boss_eye_mat.albedo_color = boss_eye_mat.albedo_color.lerp(Color("ff3d5a"), 1.0 - exp(-6.0 * delta))
+		boss_fire_t -= delta
+		if boss_fire_t <= 0.0:
+			# warning shot into the river ahead (just for show)
+			boss_fire_t = randf_range(1.8, 3.2)
+			var hit := Vector3(randf_range(-3.0, 3.0), water_y, boat_z + randf_range(10.0, 18.0))
+			_show_beam(boss.global_position + Vector3(0.0, -0.3, -3.0), hit, Color("ff3d5a"))
+			burst_splash(hit)
+	if boss_beam and boss_beam.visible:
+		boss_beam_t -= delta
+		if boss_beam_t <= 0.0:
+			boss_beam.visible = false
+
+
+func _show_beam(from: Vector3, to: Vector3, col: Color) -> void:
+	if boss_beam == null:
+		return
+	var mat := boss_beam.material_override as StandardMaterial3D
+	mat.albedo_color = Color(col, 0.9)
+	mat.emission = col
+	var mid := (from + to) * 0.5
+	var length := from.distance_to(to)
+	boss_beam.global_position = mid
+	var dir := (to - from).normalized()
+	var side := dir.cross(Vector3.FORWARD if absf(dir.z) < 0.99 else Vector3.RIGHT).normalized()
+	var fwd := side.cross(dir).normalized()
+	boss_beam.global_basis = Basis(side, dir * length, fwd)
+	boss_beam.visible = true
+	boss_beam_t = 0.14
+
+
+## Your laser hits the boss.
+func boss_hit(from: Vector3, final_hit: bool) -> void:
+	if not boss_alive or boss == null:
+		return
+	_show_beam(from, boss.global_position, Color("54e0ff"))
+	boss_eye_mat.albedo_color = Color.WHITE
+	sparkle.global_position = boss.global_position + Vector3(0.0, -0.4, -2.5)
+	sparkle.restart()
+	var tw := create_tween()
+	tw.tween_property(boss, "scale", Vector3(1.12, 0.9, 1.12), 0.06)
+	tw.tween_property(boss, "scale", Vector3.ONE, 0.18)
+	if final_hit:
+		boss_eye_mat.albedo_color = Color("ffd166")
+
+
+func boss_explode() -> void:
+	if boss == null or not boss_alive:
+		return
+	boss_alive = false
+	burst_confetti(boss.global_position)
+	burst_splash(boss.global_position)
+	var tw := create_tween()
+	tw.tween_property(boss, "scale", Vector3(1.6, 1.6, 1.6), 0.12)
+	tw.tween_property(boss, "scale", Vector3(0.01, 0.01, 0.01), 0.3).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
+	tw.tween_callback(boss.hide)
 
 
 # ================================================================== events

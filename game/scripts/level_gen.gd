@@ -22,9 +22,15 @@ const BOOST_TIME := 2.6
 const SLOW_MULT := 0.62
 const SLOW_TIME := 3.0
 const MAGNET_TIME := 6.0
+const CURRENT_V := 6.5        # geyser / vortex kick to the tide speed
+const MINE_HALF := 0.45       # half-thickness of a plasma-mine band
 
-const OBSTACLES := ["reef", "bridge", "gate", "drawbridge", "breather"]
+const OBSTACLES := ["reef", "bridge", "gate", "drawbridge", "breather", "slider", "mine"]
 const PICKUPS := ["boost", "slow", "shield", "magnet"]
+const CURRENTS := ["geyser", "vortex"]
+
+## New things arrive regularly so the game keeps surprising you.
+const UNLOCKS := {7: "slider", 10: "mine", 13: "geyser", 16: "vortex"}
 
 ## Shown the first time a new thing appears.
 const INTROS := {
@@ -35,11 +41,25 @@ const INTROS := {
 	"slow": ["MOON RING", "Slows time for a moment."],
 	"shield": ["SHIELD", "Survive one crash."],
 	"magnet": ["MAGNET", "Pulls in every pearl nearby."],
+	"slider": ["MOVING GATE", "The gap slides up and down. Ride with it!"],
+	"mine": ["PLASMA MINES", "Go OVER or UNDER. Your choice!"],
+	"geyser": ["GEYSER", "It blasts the tide UP. Let go fast!"],
+	"vortex": ["VORTEX", "It sucks the tide DOWN. Hold fast!"],
 }
 
 
+## "normal", "rush" (coin rush bonus) or "boss" (end of every world).
+static func special_for(level: int) -> String:
+	if level >= 4 and level % 4 == 0:
+		return "boss"
+	if level >= 6 and level % 4 == 2:
+		return "rush"
+	return "normal"
+
+
+## Gentle start (kids and first-time players), then a steady climb.
 static func speed_for(level: int) -> float:
-	return minf(7.0 + (level - 1) * 0.3, 12.5)
+	return minf(5.6 + (level - 1) * 0.36, 12.5)
 
 
 static func rise_for(level: int) -> float:
@@ -54,12 +74,16 @@ static func is_obstacle(kind: String) -> bool:
 	return kind in OBSTACLES
 
 
+static func is_current(kind: String) -> bool:
+	return kind in CURRENTS
+
+
 static func wave(e: Dictionary, t: float) -> float:
 	return 0.5 + 0.5 * sin(TAU * t / float(e.period) + float(e.phase))
 
 
 static func h_at(e: Dictionary, t: float) -> float:
-	if e.kind == "breather":
+	if e.kind == "breather" or e.kind == "slider":
 		return float(e.h) + float(e.amp) * wave(e, t)
 	return e.h
 
@@ -67,11 +91,34 @@ static func h_at(e: Dictionary, t: float) -> float:
 static func b_at(e: Dictionary, t: float) -> float:
 	if e.kind == "drawbridge":
 		return float(e.b) - float(e.amp) * wave(e, t)
+	if e.kind == "slider":
+		return float(e.b) + float(e.amp) * wave(e, t)
 	return e.b
 
 
+## How much room the boat has at this water level (negative = touching).
+static func clearance(e: Dictionary, t: float, water: float) -> float:
+	if e.kind == "mine":
+		return maxf(water - DRAFT - float(e.m1), float(e.m0) - BOAT_TOP - water)
+	var clear := NONE_HIGH
+	var h := h_at(e, t)
+	var b := b_at(e, t)
+	if h > NONE_LOW:
+		clear = minf(clear, water - DRAFT - h)
+	if b < NONE_HIGH:
+		clear = minf(clear, b - BOAT_TOP - water)
+	return clear
+
+
 ## Water levels that pass this obstacle at time t: x = lowest, y = highest.
-static func safe_range(e: Dictionary, t: float) -> Vector2:
+## Mines have two safe sides; `water` picks the nearer one.
+static func safe_range(e: Dictionary, t: float, water := -1.0) -> Vector2:
+	if e.kind == "mine":
+		var below := Vector2(WATER_MIN, float(e.m0) - BOAT_TOP)
+		var above := Vector2(float(e.m1) + DRAFT, WATER_MAX)
+		if water > (below.y + above.x) * 0.5:
+			return above
+		return below
 	var lo := WATER_MIN
 	var hi := WATER_MAX
 	var h := h_at(e, t)
@@ -107,16 +154,27 @@ static func ramp_level(data: Dictionary, z: float) -> int:
 	return lv
 
 
+## 1 on the first level, fading to 0 by level 7: keeps early heights gentle.
+static var _easy := 0.0
+
+
 static func generate(level: int, seed_override := -1, endless := false) -> Dictionary:
+	var special := "normal" if endless else special_for(level)
+	_easy = 0.0 if endless else clampf(1.0 - (level - 1) / 6.0, 0.0, 1.0)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = level * 7919 + 1234 if seed_override < 0 else seed_override
 	var speed := speed_for(level)
 	var rise := rise_for(level)
 	var fall := fall_for(level)
-	var reaction := maxf(0.95 - (level - 1) * 0.025, 0.5)
-	var window := maxf(1.8 - (level - 1) * 0.06, 0.85)
+	var reaction := maxf(1.3 - (level - 1) * 0.04, 0.5)
+	var window := maxf(2.4 - (level - 1) * 0.08, 0.85)
 	var weights := _patterns_for(level)
 	var segments := mini(5 + level, 18) if not endless else ENDLESS_SEGMENTS
+	if special == "rush":
+		weights = {"reef": 2.0, "bridge": 2.0, "gate": 1.0, "boost": 1.6, "magnet": 1.0}
+		segments = 12
+	elif special == "boss":
+		segments = mini(segments + (1 if level <= 4 else 3), 21)
 	var ramp: Array = []
 
 	var items: Array[Dictionary] = []
@@ -129,6 +187,11 @@ static func generate(level: int, seed_override := -1, endless := false) -> Dicti
 		queue = ["reef", "bridge", "reef"]
 	elif level == 3:
 		queue = ["boost"]
+	elif UNLOCKS.has(level):
+		# a brand-new obstacle: introduce it early, then show it again
+		var fresh: String = UNLOCKS[level]
+		var pat0: String = fresh + "_intro"
+		queue = ["reef", pat0, "bridge", fresh + "_intro"]
 
 	for s in segments:
 		if endless:
@@ -138,21 +201,22 @@ static func generate(level: int, seed_override := -1, endless := false) -> Dicti
 				speed = speed_for(lv)
 				rise = rise_for(lv)
 				fall = fall_for(lv)
-				reaction = maxf(0.95 - (lv - 1) * 0.025, 0.5)
-				window = maxf(1.8 - (lv - 1) * 0.06, 0.85)
+				reaction = maxf(1.3 - (lv - 1) * 0.04, 0.5)
+				window = maxf(2.4 - (lv - 1) * 0.08, 0.85)
 				weights = _patterns_for(lv)
 		var pat: String = queue.pop_front() if not queue.is_empty() else _pick(weights, rng)
 		for spec in _make_pattern(pat, window, rng):
 			var nat: float = spec.nat
 			var move := 0.0
 			for lv in before:
-				var d := nat - lv
-				move = maxf(move, d / rise if d > 0.0 else -d / fall)
+				move = maxf(move, _move_time(spec, lv, rise, fall))
 			var eff := speed * BOOST_MULT if z < boost_end else speed
 			var tight: bool = spec.get("tight", false)
 			var extra := rng.randf_range(0.0, eff * (0.15 if tight else 0.45))
 			var gap := eff * (reaction + move * 1.3) + 3.2 + extra
-			var doubled := z < boost_end
+			if is_current(spec.kind):
+				gap = eff * 0.6 + 6.0 + extra * 0.3
+			var doubled := z < boost_end or special == "rush"
 			_pearl_trail(pearls, z, z + gap, before[0], nat, rng, doubled)
 			z += gap
 			spec.z = z
@@ -161,8 +225,14 @@ static func generate(level: int, seed_override := -1, endless := false) -> Dicti
 				pearls.append(Vector3(0.0, spec.bonus_y, z))
 			if spec.kind == "boost":
 				boost_end = z + speed * BOOST_MULT * BOOST_TIME
-			if is_obstacle(spec.kind):
+			if spec.kind == "mine":
+				before = [(float(spec.m0) - BOAT_TOP + WATER_MIN) * 0.5, (float(spec.m1) + DRAFT + WATER_MAX) * 0.5]
+			elif is_obstacle(spec.kind):
 				before = [nat]
+			elif spec.kind == "geyser":
+				before.append(WATER_MAX)
+			elif spec.kind == "vortex":
+				before.append(WATER_MIN)
 			else:
 				before.append(nat)
 
@@ -173,9 +243,21 @@ static func generate(level: int, seed_override := -1, endless := false) -> Dicti
 			"speed": speed_for(2), "rise": rise_for(2), "fall": fall_for(2),
 		}
 	return {
-		"items": items, "pearls": pearls, "finish": finish,
+		"items": items, "pearls": pearls, "finish": finish, "special": special,
 		"speed": speed, "rise": rise, "fall": fall,
 	}
+
+
+## Seconds the tide needs to get from `lv` to a level that passes `spec`.
+static func _move_time(spec: Dictionary, lv: float, rise: float, fall: float) -> float:
+	if spec.kind == "mine":
+		var lo_top := float(spec.m0) - BOAT_TOP - 0.2
+		var hi_bot := float(spec.m1) + DRAFT + 0.2
+		if lv <= lo_top or lv >= hi_bot:
+			return 0.0
+		return minf((lv - lo_top) / fall, (hi_bot - lv) / rise)
+	var d := float(spec.nat) - lv
+	return d / rise if d > 0.0 else -d / fall
 
 
 static func _patterns_for(level: int) -> Dictionary:
@@ -195,6 +277,15 @@ static func _patterns_for(level: int) -> Dictionary:
 	if level >= 6:
 		p["shield"] = 0.5
 		p["magnet"] = 0.6
+	if level >= 7:
+		p["slider"] = 1.5
+	if level >= 10:
+		p["mine"] = 1.6
+		p["mine_pair"] = 0.8
+	if level >= 13:
+		p["geyser"] = 1.3
+	if level >= 16:
+		p["vortex"] = 1.3
 	return p
 
 
@@ -240,6 +331,22 @@ static func _gate(center: float, window: float) -> Dictionary:
 	return e
 
 
+static func _mine(center: float) -> Dictionary:
+	var e := _item("mine")
+	e["m0"] = center - MINE_HALF
+	e["m1"] = center + MINE_HALF
+	e.depth = 1.0
+	e.nat = (center - MINE_HALF - BOAT_TOP + WATER_MIN) * 0.5
+	e.period = 1.0
+	return e
+
+
+static func _current(kind: String) -> Dictionary:
+	var e := _item(kind)
+	e.depth = 2.0
+	return e
+
+
 static func _pickup(kind: String, y: float) -> Dictionary:
 	var e := _item(kind)
 	e.y = y
@@ -252,9 +359,9 @@ static func _make_pattern(pat: String, window: float, rng: RandomNumberGenerator
 	var out: Array[Dictionary] = []
 	match pat:
 		"reef":
-			out.append(_reef(rng.randf_range(0.7, 3.4)))
+			out.append(_reef(rng.randf_range(0.7, lerpf(3.4, 2.2, _easy))))
 		"bridge":
-			out.append(_bridge(rng.randf_range(2.7, 6.3)))
+			out.append(_bridge(rng.randf_range(lerpf(2.7, 3.9, _easy), 6.3)))
 		"gate":
 			out.append(_gate(rng.randf_range(1.6, 4.3), window))
 		"stairs_up":
@@ -303,6 +410,31 @@ static func _make_pattern(pat: String, window: float, rng: RandomNumberGenerator
 		"slow_gate":
 			out.append(_pickup("slow", rng.randf_range(1.6, 4.0)))
 			out.append(_gate(rng.randf_range(1.6, 4.3), window * 0.85))
+		"slider", "slider_intro":
+			var sl := _item("slider")
+			var win := window * (1.4 if pat == "slider_intro" else 1.2)
+			var c0 := rng.randf_range(1.3, 1.8)
+			sl.amp = rng.randf_range(1.4, 2.0) if pat == "slider" else 1.4
+			sl.h = c0 - win * 0.5 - DRAFT
+			sl.b = c0 + win * 0.5 + BOAT_TOP
+			sl.period = rng.randf_range(3.4, 4.4) if pat == "slider" else 4.4
+			sl.phase = rng.randf_range(0.0, TAU)
+			sl.nat = c0 + sl.amp * 0.5
+			out.append(sl)
+		"mine", "mine_intro":
+			out.append(_mine(rng.randf_range(2.85, 4.25)))
+		"mine_pair":
+			# first one easier to pass low, second one easier high
+			out.append(_mine(rng.randf_range(3.6, 4.25)))
+			var m2 := _mine(rng.randf_range(2.85, 3.3))
+			out.append(m2)
+		"geyser", "geyser_intro":
+			out.append(_current("geyser"))
+			var gb := _bridge(rng.randf_range(4.6, 5.6) if pat == "geyser_intro" else rng.randf_range(3.6, 5.0))
+			out.append(gb)
+		"vortex", "vortex_intro":
+			out.append(_current("vortex"))
+			out.append(_reef(rng.randf_range(1.4, 2.0) if pat == "vortex_intro" else rng.randf_range(1.8, 2.8)))
 		"shield":
 			out.append(_pickup("shield", rng.randf_range(1.8, 4.4)))
 		"magnet":
@@ -328,30 +460,41 @@ static func _pearl_trail(pearls: Array[Vector3], z0: float, z1: float, a: float,
 # ------------------------------------------------------------------ AI pilot (rivals + autotest)
 
 ## Water level an AI captain at `z` wants right now (ignores pickups).
-static func pilot_target(items: Array, z: float, run_t: float, speed: float) -> float:
+static func pilot_target(items: Array, z: float, run_t: float, speed: float, water := WATER_REST) -> float:
 	for e in items:
 		if not is_obstacle(e.kind) or e.get("smashed", false):
 			continue
 		if float(e.z) + float(e.depth) * 0.5 < z - BOAT_HALF_LEN:
 			continue
 		var eta := maxf(0.0, (float(e.z) - z) / maxf(speed, 0.1))
-		var lo := -INF
-		var hi := INF
-		for k in range(-3, 4):
-			var r := safe_range(e, run_t + eta + k * 0.1)
-			lo = maxf(lo, r.x + 0.12)
-			hi = minf(hi, r.y - 0.12)
-		if hi < lo:
-			if e.kind == "drawbridge":
-				lo = WATER_MIN
-				hi = float(e.b) - float(e.amp) - BOAT_TOP - 0.12
-			else:
-				lo = float(e.h) + float(e.amp) + DRAFT + 0.12
-				hi = WATER_MAX
-		if e.h <= NONE_LOW:
-			return maxf(WATER_MIN, hi - 0.35)
-		return (lo + hi) * 0.5 if hi < WATER_MAX else minf(lo + 0.35, WATER_MAX)
+		return pilot_level(e, run_t + eta, water)
 	return WATER_REST
+
+
+## Best water level to aim for to pass `e` around time `at`.
+static func pilot_level(e: Dictionary, at: float, water: float) -> float:
+	var lo := -INF
+	var hi := INF
+	var span := 1 if e.kind == "slider" else 3
+	for k in range(-span, span + 1):
+		var r := safe_range(e, at + k * 0.1, water)
+		lo = maxf(lo, r.x + 0.12)
+		hi = minf(hi, r.y - 0.12)
+	if hi < lo:
+		if e.kind == "drawbridge":
+			lo = WATER_MIN
+			hi = float(e.b) - float(e.amp) - BOAT_TOP - 0.12
+		elif e.kind == "breather":
+			lo = float(e.h) + float(e.amp) + DRAFT + 0.12
+			hi = WATER_MAX
+		else:
+			var r2 := safe_range(e, at, water)
+			return (r2.x + r2.y) * 0.5
+	if e.kind == "mine":
+		return (lo + hi) * 0.5
+	if float(e.h) <= NONE_LOW:
+		return maxf(WATER_MIN, hi - 0.35)
+	return (lo + hi) * 0.5 if hi < WATER_MAX else minf(lo + 0.35, WATER_MAX)
 
 
 ## Is something at (z, water) hitting an obstacle right now?
@@ -365,11 +508,7 @@ static func hits(items: Array, z: float, water: float, run_t: float) -> bool:
 			continue
 		if z0 > z + BOAT_HALF_LEN:
 			return false
-		var h := h_at(e, run_t)
-		var b := b_at(e, run_t)
-		if h > NONE_LOW and water - DRAFT - h + HIT_GRACE < 0.0:
-			return true
-		if b < NONE_HIGH and b - BOAT_TOP - water + HIT_GRACE < 0.0:
+		if clearance(e, run_t, water) + HIT_GRACE < 0.0:
 			return true
 	return false
 

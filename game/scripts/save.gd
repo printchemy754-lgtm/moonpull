@@ -26,13 +26,47 @@ var race_wins := 0
 var xp := 0
 var best_endless := 0
 var pending_ranks: Array = []   # ranks reached but not yet shown
+var upgrades := {}              # Upgrades id -> level
+var bosses := 0                 # bosses defeated
+var fevers := 0                 # FEVERs triggered (all time)
+var fail_level := 0             # level the player keeps losing on
+var fail_count := 0             # game overs in a row on fail_level
+var best_progress := {}         # "level" -> best % reached
+
+
+signal loaded
+var is_loaded := false
+const CLOUD_KEY := "moonpull_save"
 
 
 func _ready() -> void:
 	var cfg := ConfigFile.new()
-	if cfg.load(PATH) != OK:
-		_fix()
-		return
+	if cfg.load(PATH) == OK:
+		_read(cfg)
+	_fix()
+	if OS.has_feature("web"):
+		_web_load()
+	else:
+		is_loaded = true
+
+
+## Browser on CrazyGames: progress lives in their Data Module.
+func _web_load() -> void:
+	var waited := 0.0
+	while not CrazySDK.settled() and waited < 5.0:
+		await get_tree().process_frame
+		waited += get_process_delta_time()
+	var text := CrazySDK.load_text(CLOUD_KEY)
+	if text != "":
+		var cfg := ConfigFile.new()
+		if cfg.parse(text) == OK:
+			_read(cfg)
+			_fix()
+	is_loaded = true
+	loaded.emit()
+
+
+func _read(cfg: ConfigFile) -> void:
 	level = maxi(int(cfg.get_value("p", "level", 1)), 1)
 	if cfg.has_section_key("p", "coins"):
 		coins = maxi(int(cfg.get_value("p", "coins", 0)), 0)
@@ -63,10 +97,15 @@ func _ready() -> void:
 	xp = int(cfg.get_value("p", "xp", 0))
 	best_endless = int(cfg.get_value("p", "best_endless", 0))
 	pending_ranks = cfg.get_value("p", "pending_ranks", [])
+	upgrades = cfg.get_value("p", "upgrades", {})
+	bosses = int(cfg.get_value("p", "bosses", 0))
+	fevers = int(cfg.get_value("p", "fevers", 0))
+	fail_level = int(cfg.get_value("p", "fail_level", 0))
+	fail_count = int(cfg.get_value("p", "fail_count", 0))
+	best_progress = cfg.get_value("p", "best_progress", {})
 	sound = bool(cfg.get_value("s", "sound", true))
 	music = bool(cfg.get_value("s", "music", true))
 	vibe = bool(cfg.get_value("s", "vibe", true))
-	_fix()
 
 
 func _fix() -> void:
@@ -107,10 +146,17 @@ func save() -> void:
 	cfg.set_value("p", "xp", xp)
 	cfg.set_value("p", "best_endless", best_endless)
 	cfg.set_value("p", "pending_ranks", pending_ranks)
+	cfg.set_value("p", "upgrades", upgrades)
+	cfg.set_value("p", "bosses", bosses)
+	cfg.set_value("p", "fevers", fevers)
+	cfg.set_value("p", "fail_level", fail_level)
+	cfg.set_value("p", "fail_count", fail_count)
+	cfg.set_value("p", "best_progress", best_progress)
 	cfg.set_value("s", "sound", sound)
 	cfg.set_value("s", "music", music)
 	cfg.set_value("s", "vibe", vibe)
 	cfg.save(PATH)
+	CrazySDK.save_text(CLOUD_KEY, cfg.encode_to_text())
 
 
 func add_coins(n: int) -> void:

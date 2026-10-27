@@ -72,7 +72,7 @@ func simulate(delta: float, items: Array, run_t: float, speed: float, rise: floa
 	_decide -= delta
 	if _decide <= 0.0:
 		_decide = skill * randf_range(0.8, 1.3)
-		var tgt := LevelGen.pilot_target(items, z, run_t, speed)
+		var tgt := LevelGen.pilot_target(items, z, run_t, speed, water)
 		tgt += randf_range(-0.12, 0.12)
 		holding = water + vel * absf(vel) / 32.0 + vel * skill * 0.5 < tgt
 	vel = move_toward(vel, rise if holding else -fall, 16.0 * delta)

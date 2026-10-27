@@ -33,6 +33,8 @@ const INTERSTITIAL_FROM_LEVEL := 6
 const INTERSTITIAL_MIN_GAP_MS := 75000
 
 var _plugin: Object = null
+var _in_ad := false
+var _mute_tick := 0.0
 var _rounds := 0
 var _last_full_screen_ms := -INTERSTITIAL_MIN_GAP_MS
 
@@ -44,6 +46,8 @@ func _ready() -> void:
 		_plugin.connect("interstitial_closed", _on_plugin_interstitial, CONNECT_DEFERRED)
 		_plugin.connect("ad_error", _on_plugin_error, CONNECT_DEFERRED)
 		_plugin.initialize(BANNER_ID, INTERSTITIAL_ID, REWARDED_ID)
+	elif OS.has_feature("web"):
+		print("[Ads] browser build — CrazyGames SDK ads when available, else simulated.")
 	else:
 		print("[Ads] GodotAds plugin not found — simulating ads (desktop/editor).")
 
@@ -70,6 +74,11 @@ const STORE_URL := "https://play.google.com/store/apps/details?id=com.streamlet.
 
 ## Opens the Android share sheet (or copies the text in the browser/desktop).
 ## Returns true when the system share sheet was used.
+## Sharing is hidden in the browser (portals don't allow links to app stores).
+func can_share() -> bool:
+	return not OS.has_feature("web")
+
+
 func share_text(text: String) -> bool:
 	if _plugin and _plugin.has_method("shareText"):
 		_plugin.shareText(text)
@@ -98,6 +107,13 @@ func show_rewarded() -> void:
 	if _plugin:
 		_plugin.showRewarded()
 		return
+	if CrazySDK.active():
+		_mute_for_ad(true)
+		CrazySDK.ad("rewarded", func(ok: bool):
+			_mute_for_ad(false)
+			_last_full_screen_ms = Time.get_ticks_msec()
+			rewarded_finished.emit(ok))
+		return
 	print("[Ads] (simulated) rewarded ad watched")
 	await get_tree().create_timer(0.4).timeout
 	_last_full_screen_ms = Time.get_ticks_msec()
@@ -123,9 +139,30 @@ func round_ended_should_show(level: int) -> bool:
 func show_interstitial() -> void:
 	if _plugin:
 		_plugin.showInterstitial()
+	elif CrazySDK.active():
+		_mute_for_ad(true)
+		CrazySDK.ad("midgame", func(_ok: bool):
+			_mute_for_ad(false)
+			interstitial_closed.emit())
 	else:
 		print("[Ads] (simulated) interstitial")
 		call_deferred("emit_signal", "interstitial_closed")
+
+
+## Game sound must be silent while a web ad plays.
+func _mute_for_ad(on: bool) -> void:
+	_in_ad = on
+	AudioServer.set_bus_mute(0, on or CrazySDK.muted())
+
+
+## Follows the CrazyGames "mute" setting in the browser.
+func _process(delta: float) -> void:
+	if not OS.has_feature("web"):
+		return
+	_mute_tick -= delta
+	if _mute_tick <= 0.0:
+		_mute_tick = 0.5
+		AudioServer.set_bus_mute(0, _in_ad or CrazySDK.muted())
 
 
 func _on_plugin_rewarded(earned: bool) -> void:

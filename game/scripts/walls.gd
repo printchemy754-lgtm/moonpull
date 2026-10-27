@@ -148,132 +148,93 @@ func _mass(side: float, z: float, seg: float, top: float, col: Color, from_d := 
 
 # ------------------------------------------------------------------ styles
 
-func _canyon(side: float, z: float, seg: float) -> void:   # TECH WALL
+## TECH WALL: dark armour panels with neon seams and service lights.
+func _canyon(side: float, z: float, seg: float) -> void:
 	var cols: Array = theme.walls
 	var col: Color = cols[rng.randi() % cols.size()]
-	var top := rng.randf_range(7.2, 9.6)
+	var top := rng.randf_range(7.2, 9.4)
 	var inset := rng.randf_range(0.0, 0.4)
 	var zc := z + seg * 0.5
 	var neon: Color = theme.get("neon", Color("ff2fd0"))
+	var neon2: Color = theme.get("neon2", Color("00e5ff"))
 	_mass(side, z, seg, top, col, inset)
-	# armour panels with seams
-	var panels := int(seg / 2.2)
-	for k in panels:
-		var pz := z + (k + 0.5) * seg / panels
-		_box(Vector3(0.18, top - 1.2, seg / panels - 0.25), Vector3(_x(side, inset - 0.09), 0.6 + (top - 1.2) * 0.5, pz), _m(col.lightened(0.08)))
-	# glowing seams
-	_box(Vector3(0.08, 0.1, seg + 0.04), Vector3(_x(side, inset - 0.2), 1.0, zc), _m(neon, 2.6))
-	if rng.randf() < 0.6:
-		_box(Vector3(0.08, 0.06, seg * 0.6), Vector3(_x(side, inset - 0.2), rng.randf_range(3.0, top - 1.5), zc), _m(theme.get("neon2", neon), 2.4))
-	# top cornice
-	_box(Vector3(1.5, 0.35, seg + 0.04), Vector3(_x(side, inset + 0.55), top + 0.1, zc), _m(col.lightened(0.18)))
-	_box(Vector3(0.06, 0.06, seg + 0.04), Vector3(_x(side, inset - 0.2), top + 0.27, zc), _m(neon, 2.4))
+	# armour plates
+	for y in [rng.randf_range(1.2, 2.2), rng.randf_range(3.6, 5.0)]:
+		_box(Vector3(0.3, 1.0, seg - 0.3), Vector3(_x(side, inset - 0.1), y, zc), _m(col.lightened(0.08)))
+	# neon seams
+	_box(Vector3(0.08, 0.08, seg + 0.04), Vector3(_x(side, inset - 0.05), 0.55, zc), _m(neon2, 3.0))
+	_box(Vector3(0.08, 0.08, seg + 0.04), Vector3(_x(side, inset - 0.05), top - 0.3, zc), _m(neon, 3.0))
 	if rng.randf() < 0.5:
+		_box(Vector3(0.08, top - 1.2, 0.08), Vector3(_x(side, inset - 0.05), top * 0.5 + 0.2, z + rng.randf_range(0.5, seg - 0.5)), _m(neon, 3.0))
+	_box(Vector3(1.4, 0.3, seg + 0.04), Vector3(_x(side, inset + 0.55), top + 0.1, zc), _m(col.lightened(0.2)))
+	if rng.randf() < 0.55:
 		_tree(Vector3(_x(side, rng.randf_range(1.6, 9.0)), top, z + rng.randf_range(0.0, seg)))
 	if rng.randf() < 0.1 and z > 10.0:
 		_waterfall(_x(side, inset - 0.06), top, zc, side)
 
 
-func _harbor(side: float, z: float, seg: float) -> void:   # SPACEPORT
-	var top := 3.2
+## SPACEPORT: metal quay, light bollards and hangars with glowing windows.
+func _harbor(side: float, z: float, seg: float) -> void:
+	var top := 3.4
 	var zc := z + seg * 0.5
-	var metal: Color = theme.get("metal", Color("3a3f6a"))
-	var neon: Color = theme.get("neon2", Color("00e5ff"))
-	_mass(side, z, seg, top, metal.darkened(0.2))
-	_box(Vector3(0.08, 0.08, seg + 0.04), Vector3(_x(side, -0.04), top - 0.3, zc), _m(neon, 2.6))
-	_box(Vector3(1.8, 0.3, seg + 0.04), Vector3(_x(side, 0.7), top + 0.15, zc), _m(metal.lightened(0.2)))
-	# landing pad lights along the edge
-	var lz := z + 0.8
-	while lz < z + seg:
-		_ball(0.09, Vector3(_x(side, 0.15), top + 0.32, lz), _m(theme.get("neon", neon), 3.0))
-		lz += 1.6
-	# hangar or control tower behind
-	if rng.randf() < 0.55:
-		var d := rng.randf_range(4.0, 6.0)
-		var h := rng.randf_range(2.5, 4.5)
-		_box(Vector3(d, h, seg - 0.8), Vector3(_x(side, 2.0 + d * 0.5), top + h * 0.5, zc), _m(metal.lightened(0.1), 0.0, 0.03))
-		_cyl(d * 0.5, d * 0.5, seg - 0.8, Vector3(_x(side, 2.0 + d * 0.5), top + h, zc), _m(metal.lightened(0.25), 0.0, 0.03), 16, Vector3(PI * 0.5, 0.0, 0.0))
-		_box(Vector3(0.1, h * 0.5, seg * 0.5), Vector3(_x(side, 1.96), top + h * 0.35, zc), _m(neon, 1.8))
-	else:
-		var th := rng.randf_range(5.0, 9.0)
-		var tx := _x(side, rng.randf_range(2.5, 4.0))
-		_cyl(0.45, 0.6, th, Vector3(tx, top + th * 0.5, zc), _m(metal.lightened(0.15), 0.0, 0.03), 10)
-		_cyl(1.2, 0.9, 0.9, Vector3(tx, top + th + 0.3, zc), _m(Color("1b2a4a"), 0.4, 0.03), 12)
-		_cyl(1.25, 1.25, 0.1, Vector3(tx, top + th, zc), _m(neon, 2.6), 12)
-		_ball(0.15, Vector3(tx, top + th + 1.1, zc), _m(Color("ff3d5a"), 3.0))
-
-
-func _pier(side: float, z: float, seg: float) -> void:   # MAGLEV DOCK
-	var zc := z + seg * 0.5
-	var deck_y := 2.3
-	var metal: Color = theme.get("metal", Color("3a3f6a"))
-	var neon: Color = theme.get("neon", Color("ff2fd0"))
+	var metal := Color("2e3352")
 	var neon2: Color = theme.get("neon2", Color("00e5ff"))
-	_mass(side, z, seg, 2.0, metal.darkened(0.35), 3.4)
-	_box(Vector3(3.5, 0.3, seg + 0.02), Vector3(_x(side, 1.75), deck_y, zc), _m(metal))
-	var pz := z + 0.6
+	_mass(side, z, seg, top, metal)
+	for k in 3:
+		_box(Vector3(0.06, 0.06, seg + 0.04), Vector3(_x(side, -0.03), 0.6 + k * 1.0, zc), _m(Color("4a5070")))
+	_box(Vector3(0.08, 0.08, seg + 0.04), Vector3(_x(side, -0.04), top - 0.1, zc), _m(neon2, 3.0))
+	_box(Vector3(1.6, 0.3, seg + 0.04), Vector3(_x(side, 0.6), top + 0.15, zc), _m(Color("454b6e")))
+	var bz := z + 1.2
+	while bz < z + seg - 0.6:
+		_cyl(0.14, 0.16, 0.6, Vector3(_x(side, 0.45), top + 0.6, bz), _m(Color("1c1f3a"), 0.0, 0.025))
+		_cyl(0.12, 0.12, 0.12, Vector3(_x(side, 0.45), top + 0.96, bz), _m(neon2, 3.0))
+		bz += 3.0
+	var d := rng.randf_range(4.0, 6.0)
+	var h := rng.randf_range(3.0, 6.0)
+	_box(Vector3(d, h, seg - 0.6), Vector3(_x(side, 1.6 + d * 0.5), top + h * 0.5, zc), _m(Color("252a45"), 0.0, 0.03))
+	_cyl(d * 0.5, d * 0.5, seg - 0.7, Vector3(_x(side, 1.6 + d * 0.5), top + h, zc), _m(Color("3a4066"), 0.0, 0.03), 12, Vector3(PI * 0.5, 0.0, 0.0))
+	var pal := [Color("ff2fd0"), Color("00e5ff"), Color("ffe14f"), Color("ff8a3d")]
+	var wc: Color = pal[rng.randi() % pal.size()]
+	for wz in [-0.25, 0.0, 0.25]:
+		_box(Vector3(0.08, 0.5, 0.9), Vector3(_x(side, 1.56), top + h * 0.6, zc + wz * seg), _m(wc, 2.0))
+
+
+## MAGLEV DOCK: a floating platform on glowing hover rails.
+func _pier(side: float, z: float, seg: float) -> void:
+	var zc := z + seg * 0.5
+	var deck_y := 2.35
+	var neon: Color = theme.get("neon", Color("ff2fd0"))
+	_mass(side, z, seg, 2.2, Color("1c1f3a"), 3.4)
+	_box(Vector3(3.5, 0.3, seg + 0.02), Vector3(_x(side, 1.75), deck_y, zc), _m(Color("3a3f6a")))
+	_box(Vector3(3.5, 0.06, seg + 0.04), Vector3(_x(side, 1.75), deck_y - 0.17, zc), _m(neon, 3.0))
+	var pz := z + 0.8
 	while pz < z + seg:
-		_box(Vector3(0.35, deck_y - LevelGen.FLOOR_Y, 0.35), Vector3(_x(side, 0.4), (deck_y + LevelGen.FLOOR_Y) * 0.5, pz), _m(metal.darkened(0.2), 0.0, 0.02))
-		pz += 2.2
-	# maglev rail with a glowing track
-	_box(Vector3(0.6, 0.25, seg + 0.02), Vector3(_x(side, 2.2), deck_y + 0.27, zc), _m(metal.lightened(0.2)))
-	_box(Vector3(0.12, 0.04, seg + 0.04), Vector3(_x(side, 2.2), deck_y + 0.41, zc), _m(neon2, 3.0))
-	_box(Vector3(0.06, 0.06, seg + 0.04), Vector3(_x(side, 0.02), deck_y + 0.1, zc), _m(neon, 2.6))
-	if rng.randf() < 0.3:
-		# a parked maglev pod
-		var podz := z + rng.randf_range(1.5, seg - 1.5)
-		_ball(0.55, Vector3(_x(side, 2.2), deck_y + 0.85, podz), _m(Color("f2f5fa"), 0.0, 0.03), Vector3(1.0, 0.8, 2.4))
-		_box(Vector3(0.9, 0.18, 2.0), Vector3(_x(side, 2.2), deck_y + 0.95, podz), _m(neon2, 1.4))
+		_cyl(0.12, 0.12, deck_y - LevelGen.FLOOR_Y, Vector3(_x(side, 3.2), (deck_y + LevelGen.FLOOR_Y) * 0.5, pz), _m(Color("2a2d52"), 0.0, 0.02), 8)
+		_cyl(0.05, 0.05, 0.85, Vector3(_x(side, 0.2), deck_y + 0.5, pz), _m(Color("2a2d52"), 0.0, 0.02), 6)
+		pz += 2.4
+	_box(Vector3(0.08, 0.08, seg + 0.04), Vector3(_x(side, 0.2), deck_y + 0.9, zc), _m(theme.get("neon2", Color("00e5ff")), 3.0))
+	if rng.randf() < 0.45:
+		var cs := rng.randf_range(0.6, 0.85)
+		_box(Vector3(cs, cs, cs), Vector3(_x(side, rng.randf_range(1.2, 2.8)), deck_y + 0.15 + cs * 0.5, z + rng.randf_range(1.0, seg - 1.0)), _m(Color("454b6e"), 0.0, 0.03), Vector3(0.0, rng.randf_range(-0.4, 0.4), 0.0))
 	if rng.randf() < 0.4:
-		_tree(Vector3(_x(side, rng.randf_range(4.5, 9.0)), 2.0, z + rng.randf_range(0.0, seg)))
+		_tree(Vector3(_x(side, rng.randf_range(4.5, 9.0)), 2.2, z + rng.randf_range(0.0, seg)))
 
 
-func _village(side: float, z: float, seg: float) -> void:   # HAB DOMES
+## HAB DOMES: glass domes with lit rings.
+func _village(side: float, z: float, seg: float) -> void:
 	var zc := z + seg * 0.5
-	var metal: Color = theme.get("metal", Color("3a3f6a"))
-	_mass(side, z, seg, 1.0, metal.darkened(0.3), 0.0)
-	var pal := [Color("f2f5fa"), Color("dfe6f5"), Color("ffe3f4"), Color("e0fff8")]
-	var r := clampf(seg * 0.45, 2.4, 3.6)
-	var cx := _x(side, r + 0.2)
-	var dome: Color = pal[rng.randi() % pal.size()]
-	_ball(r, Vector3(cx, 1.0, zc), _m(dome, 0.0, 0.035), Vector3(1.0, 0.85, 1.0))
-	_cyl(r + 0.05, r + 0.05, 0.3, Vector3(cx, 1.1, zc), _m(metal, 0.0, 0.02), 24)
-	var glow := _m(theme.get("neon2", Color("00e5ff")), 1.8)
-	for k in 3:
-		var a := lerpf(-0.6, 0.6, k / 2.0)
-		var wz := zc + sin(a) * r * 0.85
-		_box(Vector3(0.12, 0.45, 0.55), Vector3(_x(side, r + 0.2 - cos(a) * r * 0.97), 2.2, wz), glow, Vector3(0.0, -side * a, 0.0))
-	_box(Vector3(0.14, 1.2, 0.9), Vector3(_x(side, 0.1), 1.6, zc), _m(theme.get("neon", Color("ff2fd0")), 1.6))
-	if rng.randf() < 0.4:
-		_cyl(0.04, 0.04, 1.4, Vector3(cx, 1.0 + r * 0.85 + 0.7, zc), _m(Color("c0c8dc")), 6)
-		_ball(0.1, Vector3(cx, 1.0 + r * 0.85 + 1.45, zc), _m(Color("ff3d5a"), 3.0))
-
-
-func _candy(side: float, z: float, seg: float) -> void:   # SYNTHWAVE
-	var zc := z + seg * 0.5
-	var top := 6.4
-	var bands := [Color("2a0a4a"), Color("4a0f6a"), Color("7a1a8a"), Color("b02a9a"), Color("ff4fa8"), Color("ff8a5b")]
-	var n := bands.size()
-	var hh := (top - LevelGen.FLOOR_Y + 1.0) / n
-	for k in n:
-		var y0 := LevelGen.FLOOR_Y - 1.0 + k * hh
-		_box(Vector3(30.0, hh, seg + 0.02), Vector3(_x(side, 15.0), y0 + hh * 0.5, zc), _m(bands[k]))
-	for k in 3:
-		_box(Vector3(0.06, 0.06, seg + 0.04), Vector3(_x(side, -0.03), 1.0 + k * 1.8, zc), _m(Color("00e5ff"), 3.0))
-	var gz := z
-	while gz < z + seg:
-		_box(Vector3(0.06, top, 0.06), Vector3(_x(side, -0.03), top * 0.5, gz), _m(Color("00e5ff"), 1.6))
-		gz += 2.0
-	if rng.randf() < 0.55:
-		# neon palm silhouette
-		var px := _x(side, rng.randf_range(1.5, 4.0))
-		var pz2 := z + rng.randf_range(1.0, seg - 1.0)
-		var trunk := _m(Color("1a0630"), 0.0, 0.0)
-		for k in 4:
-			_cyl(0.16, 0.13, 0.9, Vector3(px + side * k * 0.08, top + 0.45 + k * 0.85, pz2), trunk, 6)
-		for k in 6:
-			var ang := TAU * k / 6.0
-			_box(Vector3(1.5, 0.06, 0.3), Vector3(px + side * 0.3 + cos(ang) * 0.65, top + 3.6, pz2 + sin(ang) * 0.65), _m(Color("ff4fd8"), 1.8, 0.0), Vector3(0.0, -ang, -0.3))
+	_mass(side, z, seg, 1.0, Color("2a2d52"), 0.0)
+	var r := rng.randf_range(2.0, 2.6)
+	var pal := [Color("ffe14f"), Color("ff8a3d"), Color("39ff9f"), Color("00e5ff"), Color("ff2fd0")]
+	var lc: Color = pal[rng.randi() % pal.size()]
+	_cyl(r + 0.2, r + 0.2, 0.6, Vector3(_x(side, r + 0.3), 1.3, zc), _m(Color("3a3f6a"), 0.0, 0.03), 16)
+	_ball(r, Vector3(_x(side, r + 0.3), 1.6, zc), _m(Color("9fb6ff"), 0.3, 0.03), Vector3(1.0, 0.85, 1.0))
+	_cyl(r + 0.25, r + 0.25, 0.1, Vector3(_x(side, r + 0.3), 1.62, zc), _m(lc, 2.5), 16)
+	for wz in [-0.2, 0.2]:
+		_box(Vector3(0.12, 0.6, 0.6), Vector3(_x(side, 0.05), 1.3, zc + wz * seg), _m(lc, 1.5))
+	if rng.randf() < 0.5:
+		_cyl(0.05, 0.05, 2.0, Vector3(_x(side, r + 0.3), 1.6 + r * 0.85 + 1.0, zc), _m(Color("c8d2ff"), 0.0, 0.02), 6)
+		_ball(0.15, Vector3(_x(side, r + 0.3), 1.6 + r * 0.85 + 2.0, zc), _m(Color("ff3d5a"), 3.0, 0.0))
 
 
 func _crystal(side: float, z: float, seg: float) -> void:
@@ -292,6 +253,22 @@ func _crystal(side: float, z: float, seg: float) -> void:
 		var c2: Color = cols[rng.randi() % cols.size()]
 		var h2 := rng.randf_range(1.0, 2.4)
 		_cyl(0.35, 0.0, h2, Vector3(_x(side, rng.randf_range(1.0, 6.0)), top + h2 * 0.5, z + rng.randf_range(0.0, seg)), _m(c2, 1.8, 0.03), 5)
+
+
+## SYNTHWAVE: magenta/violet stripes with a glowing sun disc on top.
+func _candy(side: float, z: float, seg: float) -> void:
+	var zc := z + seg * 0.5
+	var top := 6.4
+	var a := Color("ff2fd0")
+	var b := Color("3a0f5a")
+	var n := 8
+	for k in n:
+		var y0 := LevelGen.FLOOR_Y - 1.0 + k * (top - LevelGen.FLOOR_Y + 1.0) / n
+		var hh := (top - LevelGen.FLOOR_Y + 1.0) / n
+		_box(Vector3(30.0, hh, seg + 0.02), Vector3(_x(side, 15.0), y0 + hh * 0.5, zc), _m(a.darkened(0.35) if k % 2 == 0 else b))
+	_box(Vector3(0.08, 0.08, seg + 0.04), Vector3(_x(side, -0.04), top, zc), _m(Color("00e5ff"), 3.0))
+	if rng.randf() < 0.4:
+		_cyl(1.3, 1.3, 0.2, Vector3(_x(side, rng.randf_range(2.0, 5.0)), top + 1.4, zc), _m(Color("ff8a3d"), 2.0, 0.03), 24, Vector3(PI * 0.5, side * PI * 0.5, 0.0))
 
 
 func _temple(side: float, z: float, seg: float) -> void:
@@ -345,41 +322,23 @@ func _tree(base: Vector3) -> void:
 	var sc := rng.randf_range(0.8, 1.4)
 	match String(theme.deco):
 		"spire":
-			var h := rng.randf_range(2.0, 5.0) * sc
-			_cyl(0.35 * sc, 0.05, h, base + Vector3(0.0, h * 0.5, 0.0), _m(b, 0.0, 0.03), 6)
-			_box(Vector3(0.08, h * 0.7, 0.08), base + Vector3(0.0, h * 0.4, 0.3 * sc), _m(a, 2.6))
-			_ball(0.12, base + Vector3(0.0, h + 0.1, 0.0), _m(a, 3.0))
+			_cyl(0.35 * sc, 0.05 * sc, 3.2 * sc, base + Vector3(0.0, 1.6 * sc, 0.0), _m(b, 0.0, 0.03), 6)
+			_ball(0.16 * sc, base + Vector3(0.0, 3.3 * sc, 0.0), _m(a, 3.0, 0.0))
 		"antenna":
-			var h2 := rng.randf_range(2.5, 5.0) * sc
-			_cyl(0.06, 0.04, h2, base + Vector3(0.0, h2 * 0.5, 0.0), _m(b, 0.0, 0.02), 6)
+			_cyl(0.06, 0.06, 2.6 * sc, base + Vector3(0.0, 1.3 * sc, 0.0), _m(b, 0.0, 0.02), 6)
 			for k in 3:
-				_box(Vector3(0.9 - k * 0.2, 0.05, 0.05), base + Vector3(0.0, h2 * (0.5 + k * 0.15), 0.0), _m(b, 0.0, 0.02))
-			_ball(0.1, base + Vector3(0.0, h2 + 0.05, 0.0), _m(a, 3.0))
+				_box(Vector3(0.8 * sc - k * 0.2, 0.05, 0.05), base + Vector3(0.0, (1.4 + k * 0.45) * sc, 0.0), _m(b, 0.0, 0.02))
+			_ball(0.1, base + Vector3(0.0, 2.65 * sc, 0.0), _m(a, 3.0, 0.0))
 		"dish":
-			_cyl(0.12, 0.15, 1.6 * sc, base + Vector3(0.0, 0.8 * sc, 0.0), _m(b, 0.0, 0.02), 8)
-			_ball(0.9 * sc, base + Vector3(0.0, 1.9 * sc, 0.0), _m(Color("e6ecf8"), 0.0, 0.03), Vector3(1.0, 0.35, 1.0))
-			_ball(0.1, base + Vector3(0.0, 2.25 * sc, 0.0), _m(a, 3.0))
-		"pine":
-			_cyl(0.18 * sc, 0.12 * sc, 0.8 * sc, base + Vector3(0.0, 0.4 * sc, 0.0), _m(b, 0.0, 0.025), 6)
-			_cyl(0.95 * sc, 0.0, 1.6 * sc, base + Vector3(0.0, 1.4 * sc, 0.0), _m(a, 0.0, 0.03), 7)
-			_cyl(0.7 * sc, 0.0, 1.3 * sc, base + Vector3(0.0, 2.2 * sc, 0.0), _m(a, 0.0, 0.03), 7)
-		"mushroom":
-			_cyl(0.12 * sc, 0.1 * sc, 0.9 * sc, base + Vector3(0.0, 0.45 * sc, 0.0), _m(Color("d8d0f0"), 0.0, 0.02), 8)
-			_ball(0.55 * sc, base + Vector3(0.0, 0.95 * sc, 0.0), _m(a, 1.8, 0.03), Vector3(1.0, 0.45, 1.0))
-		"palm":
-			for k in 3:
-				_cyl(0.15 * sc, 0.13 * sc, 0.8 * sc, base + Vector3(0.0, (0.4 + k * 0.75) * sc, 0.0), _m(b, 0.0, 0.02), 7)
-			for k in 6:
-				var ang := TAU * k / 6.0
-				_box(Vector3(1.4 * sc, 0.06, 0.35 * sc), base + Vector3(0.0, 2.3 * sc, 0.0) + Vector3(cos(ang), 0.0, sin(ang)) * 0.6 * sc, _m(a, 0.0, 0.02), Vector3(0.0, -ang, -0.35))
-		"ice":
-			for k in 3:
-				var hh := rng.randf_range(1.0, 2.6) * sc
-				_cyl(0.35 * sc, 0.0, hh, base + Vector3(rng.randf_range(-0.6, 0.6), hh * 0.5, rng.randf_range(-0.6, 0.6)), _m(b, 0.3, 0.03), 4)
+			_cyl(0.12, 0.18, 1.0 * sc, base + Vector3(0.0, 0.5 * sc, 0.0), _m(b, 0.0, 0.02), 8)
+			_cyl(0.9 * sc, 0.2 * sc, 0.35 * sc, base + Vector3(0.0, 1.2 * sc, 0.0), _m(Color("c8d2ff"), 0.0, 0.03), 16, Vector3(0.6, 0.0, 0.0))
+			_ball(0.08, base + Vector3(0.0, 1.5 * sc, 0.3 * sc), _m(a, 3.0, 0.0))
 		"crystal":
 			for k in 3:
 				var hc := rng.randf_range(0.8, 2.0) * sc
 				_cyl(0.3 * sc, 0.05, hc, base + Vector3(rng.randf_range(-0.5, 0.5), hc * 0.5, rng.randf_range(-0.5, 0.5)), _m(a, 2.2, 0.03), 5)
+		_:
+			_cyl(0.3 * sc, 0.05 * sc, 2.4 * sc, base + Vector3(0.0, 1.2 * sc, 0.0), _m(b, 0.0, 0.03), 6)
 
 
 func _waterfall(x: float, top: float, z: float, side: float) -> void:

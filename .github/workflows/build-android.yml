@@ -356,6 +356,13 @@ jobs:
           export_one "Web" "$GITHUB_WORKSPACE/out/web/index.html"
           test -s "$GITHUB_WORKSPACE/out/web/index.html" || { echo "::error::Web build was not produced"; exit 1; }
 
+      # Ready-to-upload folder for CrazyGames (download, unzip, drag the folder in).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: moonpull-web-crazygames-${{ github.run_number }}
+          path: out/web
+          if-no-files-found: error
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: out/web

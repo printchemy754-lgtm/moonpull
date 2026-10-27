@@ -227,6 +227,19 @@ func _draw() -> void:
 			for sx in [-1.0, 1.0]:
 				draw_rect(Rect2(c + Vector2(sx * r * 0.5 - r * 0.175, -r * 0.75), Vector2(r * 0.35, r * 0.7)), color)
 				draw_rect(Rect2(c + Vector2(sx * r * 0.5 - r * 0.175, -r * 0.85), Vector2(r * 0.35, r * 0.25)), Color.WHITE)
+		"heart", "heart_empty":
+			var hp := PackedVector2Array()
+			for i in 40:
+				var a := TAU * i / 40.0
+				var x := 16.0 * pow(sin(a), 3)
+				var y := -(13.0 * cos(a) - 5.0 * cos(2.0 * a) - 2.0 * cos(3.0 * a) - cos(4.0 * a))
+				hp.append(c + Vector2(x, y) * r / 17.0)
+			if kind == "heart":
+				draw_colored_polygon(hp, color)
+			else:
+				draw_colored_polygon(hp, Color(0, 0, 0, 0.35))
+				hp.append(hp[0])
+				draw_polyline(hp, Color(1, 1, 1, 0.5), w * 0.6, true)
 		"lock":
 			draw_polyline(_arc_points(c + Vector2(0, -r * 0.15), r * 0.35, PI, TAU, 12), color, w * 1.2, true)
 			draw_rect(Rect2(c + Vector2(-r * 0.55, -r * 0.15), Vector2(r * 1.1, r * 0.85)), color)

@@ -39,14 +39,16 @@ signal race_start
 signal race_leave
 signal race_double
 signal race_done
+signal upgrades_pressed
+signal upgrade_buy(id: String)
 
 const INK := Color(0.07, 0.05, 0.16, 0.92)
 const GOLD := Color("ffd166")
-const PANEL := Color(0.03, 0.04, 0.12, 0.9)
-const BLUE := Color("3a5cff")
+const PANEL := Color(0.08, 0.07, 0.2, 0.88)
+const BLUE := Color("4e7cff")
 const GREEN := Color("2fbf71")
 const ORANGE := Color("f2994a")
-const PURPLE := Color("8a3dff")
+const PURPLE := Color("7b5cff")
 const BOTTOM_SAFE := 220.0  # keep buttons above the banner ad
 
 var font: Font
@@ -92,6 +94,18 @@ var profile_btn: Button
 var tasks_btn: Button
 var chest_btn: Button
 var race_btn: Button
+var power_btn: Button
+var upgrades_panel: Control
+var upgrades_box: VBoxContainer
+var fever_box: Control
+var fever_bar: ProgressBar
+var fever_fill: StyleBoxFlat
+var fever_label: Label
+var boss_box: Control
+var boss_bar: ProgressBar
+var fever_flash: ColorRect
+var lives_row: HBoxContainer
+var _fever_tw: Tween
 var profile_panel: Control
 var name_edit: LineEdit
 var tasks_panel: Control
@@ -190,6 +204,7 @@ func _ready() -> void:
 	_build_win()
 	_build_profile()
 	_build_tasks()
+	_build_upgrades()
 	_build_chests()
 	_build_race()
 	_build_results()
@@ -256,13 +271,13 @@ func _style(color: Color, radius := 32, border := 8) -> StyleBoxFlat:
 	sb.bg_color = color
 	sb.set_corner_radius_all(radius)
 	if border > 0:
-		# neon edge + soft glow (futuristic look), thicker lower lip for depth
+		# neon rim: a bright edge of the button's own colour plus a soft glow
 		sb.border_width_left = 3
 		sb.border_width_right = 3
 		sb.border_width_top = 3
-		sb.border_width_bottom = border
-		sb.border_color = color.lightened(0.5)
-		sb.shadow_color = Color(color.lightened(0.2), 0.45)
+		sb.border_width_bottom = 3 + border / 2
+		sb.border_color = color.lightened(0.45)
+		sb.shadow_color = Color(color.r, color.g, color.b, 0.45)
 		sb.shadow_size = 10
 	else:
 		sb.border_color = color.darkened(0.35)
@@ -361,7 +376,7 @@ func _pill(icon: String, color: Color) -> Array:
 	sb.border_width_right = 3
 	sb.border_width_top = 3
 	sb.border_width_bottom = 3
-	sb.border_color = Toon.INK
+	sb.border_color = Color(color, 0.6)
 	p.add_theme_stylebox_override("panel", sb)
 	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var row := HBoxContainer.new()
@@ -386,16 +401,15 @@ func _panel_box(width := 600.0) -> VBoxContainer:
 	center.offset_bottom = -BOTTOM_SAFE * 0.5
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var panel := PanelContainer.new()
-	var sb := _style(PANEL, 44, 0)
+	var sb := _style(PANEL, 36, 0)
 	sb.set_content_margin_all(40)
 	sb.border_width_top = 3
 	sb.border_width_left = 3
 	sb.border_width_right = 3
 	sb.border_width_bottom = 3
-	sb.border_color = Color(0.0, 0.9, 1.0, 0.75)
-	sb.shadow_color = Color(0.0, 0.8, 1.0, 0.25)
-	sb.shadow_size = 22
-	sb.shadow_offset = Vector2(0, 0)
+	sb.border_color = Color("00e5ff")
+	sb.shadow_color = Color(0.0, 0.9, 1.0, 0.3)
+	sb.shadow_size = 18
 	panel.add_theme_stylebox_override("panel", sb)
 	panel.custom_minimum_size = Vector2(width, 0)
 	var box := VBoxContainer.new()
@@ -509,12 +523,69 @@ func _build_hud() -> void:
 		effects_row.add_child(chip)
 		effect_chips[k[0]] = [chip, l]
 
+	lives_row = HBoxContainer.new()
+	lives_row.add_theme_constant_override("separation", 4)
+	lives_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_place(lives_row, Control.PRESET_TOP_LEFT, 24, top + 100, 200, top + 140)
+	hud.add_child(lives_row)
+	fever_flash = ColorRect.new()
+	fever_flash.color = Color(1.0, 0.2, 0.85, 0.0)
+	_full(fever_flash)
+	hud.add_child(fever_flash)
+	fever_box = Control.new()
+	fever_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_place(fever_box, Control.PRESET_CENTER_TOP, -230, top + 168, 230, top + 206)
+	hud.add_child(fever_box)
+	fever_label = _label("FEVER", 26, Color("ff8be6"), 6)
+	_place(fever_label, Control.PRESET_LEFT_WIDE, 0, 0, 110, 0)
+	fever_box.add_child(fever_label)
+	fever_bar = _thin_bar(Color("ff4fd8"))
+	fever_fill = fever_bar.get_theme_stylebox("fill") as StyleBoxFlat
+	_place(fever_bar, Control.PRESET_FULL_RECT, 118, 8, 0, -8)
+	fever_box.add_child(fever_bar)
+	boss_box = Control.new()
+	boss_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_place(boss_box, Control.PRESET_CENTER_TOP, -230, top + 212, 230, top + 252)
+	hud.add_child(boss_box)
+	var bl := _label("BOSS", 26, Color("ff6b6b"), 6)
+	_place(bl, Control.PRESET_LEFT_WIDE, 0, 0, 110, 0)
+	boss_box.add_child(bl)
+	boss_bar = _thin_bar(Color("ff3d5a"))
+	_place(boss_bar, Control.PRESET_FULL_RECT, 118, 6, 0, -6)
+	boss_box.add_child(boss_bar)
+	boss_box.visible = false
+
 	var pill := _pill("coin", GOLD)
 	coin_pill = pill[0]
 	coin_label = pill[1]
 	_place(coin_pill, Control.PRESET_TOP_RIGHT, -260, top + 10, -24, top + 76)
 	coin_pill.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	root.add_child(coin_pill)
+
+
+func _thin_bar(color: Color) -> ProgressBar:
+	var bar := ProgressBar.new()
+	bar.show_percentage = false
+	bar.min_value = 0.0
+	bar.max_value = 1.0
+	bar.step = 0.0
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var bg := _style(Color(0.05, 0.04, 0.15, 0.75), 12, 0)
+	bg.content_margin_left = 0
+	bg.content_margin_right = 0
+	bg.border_width_left = 2
+	bg.border_width_right = 2
+	bg.border_width_top = 2
+	bg.border_width_bottom = 2
+	bg.border_color = Color(color, 0.7)
+	var fill := _style(color, 12, 0)
+	fill.content_margin_left = 0
+	fill.content_margin_right = 0
+	fill.shadow_color = Color(color, 0.6)
+	fill.shadow_size = 8
+	bar.add_theme_stylebox_override("background", bg)
+	bar.add_theme_stylebox_override("fill", fill)
+	return bar
 
 
 func _side_button(icon: String, text: String, color: Color, size := 118.0) -> Button:
@@ -635,27 +706,32 @@ func _build_menu() -> void:
 		level_nodes.append(node)
 
 	# side buttons, Going-Balls style
-	tasks_btn = _side_button("task", "TASKS", Color("2fbf71"))
-	_place(tasks_btn, Control.PRESET_TOP_LEFT, 22, top + 720, 140, top + 838)
+	tasks_btn = _side_button("task", "TASKS", Color("2fbf71"), 110.0)
+	_place(tasks_btn, Control.PRESET_TOP_LEFT, 22, top + 700, 132, top + 810)
 	tasks_btn.pressed.connect(func(): tasks_pressed.emit())
 	menu.add_child(tasks_btn)
-	chest_btn = _side_button("chest", "CHEST", Color("e0902f"))
+	chest_btn = _side_button("chest", "CHEST", Color("e0902f"), 110.0)
 	chest_btn.get_meta("icon").color = GOLD
-	_place(chest_btn, Control.PRESET_TOP_LEFT, 22, top + 852, 140, top + 970)
+	_place(chest_btn, Control.PRESET_TOP_LEFT, 22, top + 822, 132, top + 932)
 	chest_btn.pressed.connect(func(): chest_pressed.emit())
 	menu.add_child(chest_btn)
-	race_btn = _side_button("trophy", "RACE", Color("ff5a4e"))
+	race_btn = _side_button("trophy", "RACE", Color("ff5a4e"), 110.0)
 	race_btn.get_meta("icon").color = GOLD
-	_place(race_btn, Control.PRESET_TOP_RIGHT, -140, top + 720, -22, top + 838)
+	_place(race_btn, Control.PRESET_TOP_RIGHT, -132, top + 700, -22, top + 810)
 	race_btn.pressed.connect(func(): race_pressed.emit())
 	menu.add_child(race_btn)
 	var pulse := race_btn.create_tween().set_loops()
 	pulse.tween_property(race_btn, "scale", Vector2(1.07, 1.07), 0.6).set_trans(Tween.TRANS_SINE)
 	pulse.tween_property(race_btn, "scale", Vector2.ONE, 0.6).set_trans(Tween.TRANS_SINE)
-	var boats := _side_button("boat", "BOAT", ORANGE)
-	_place(boats, Control.PRESET_TOP_RIGHT, -140, top + 852, -22, top + 970)
+	var boats := _side_button("boat", "BOAT", ORANGE, 110.0)
+	_place(boats, Control.PRESET_TOP_RIGHT, -132, top + 822, -22, top + 932)
 	boats.pressed.connect(func(): boats_pressed.emit())
 	menu.add_child(boats)
+	power_btn = _side_button("bolt", "POWER", PURPLE, 110.0)
+	power_btn.get_meta("icon").color = GOLD
+	_place(power_btn, Control.PRESET_TOP_LEFT, 22, top + 944, 132, top + 1054)
+	power_btn.pressed.connect(func(): upgrades_pressed.emit())
+	menu.add_child(power_btn)
 
 	menu_hint = _label("HOLD ANYWHERE\nTO SAIL", 36, Color.WHITE, 12)
 	_place(menu_hint, Control.PRESET_TOP_WIDE, 150, top + 704, -150, top + 800)
@@ -664,15 +740,15 @@ func _build_menu() -> void:
 	tw.tween_property(menu_hint, "modulate:a", 0.35, 0.7)
 	tw.tween_property(menu_hint, "modulate:a", 1.0, 0.7)
 
-	endless_btn = _button("ENDLESS", Color("ff7a2f"), "wave", Vector2(300, 92), 36)
-	_place(endless_btn, Control.PRESET_CENTER_TOP, -150, top + 812, 150, top + 904)
+	endless_btn = _button("ENDLESS", Color("ff7a2f"), "wave", Vector2(300, 84), 34)
+	_place(endless_btn, Control.PRESET_CENTER_TOP, -150, top + 800, 150, top + 884)
 	endless_btn.pressed.connect(func(): endless_pressed.emit())
 	menu.add_child(endless_btn)
 	var glow := endless_btn.create_tween().set_loops()
 	glow.tween_property(endless_btn, "modulate", Color(1.15, 1.1, 1.0), 0.7).set_trans(Tween.TRANS_SINE)
 	glow.tween_property(endless_btn, "modulate", Color.WHITE, 0.7).set_trans(Tween.TRANS_SINE)
 	endless_best = _label("BEST 0", 24, GOLD, 6)
-	_place(endless_best, Control.PRESET_CENTER_TOP, -150, top + 904, 150, top + 934)
+	_place(endless_best, Control.PRESET_CENTER_TOP, -150, top + 884, 150, top + 912)
 	menu.add_child(endless_best)
 
 	free_btn = _button("+500", PURPLE, "ad", Vector2(300, 100))
@@ -775,6 +851,75 @@ func show_tasks(list: Array, bonus_ready: bool, bonus_done: bool, bonus: int) ->
 	tasks_box.add_child(_center(bonus_btn))
 	if not tasks_panel.visible:
 		_pop(tasks_panel)
+
+
+# ---------------------------------------------------------------- upgrades
+
+func _build_upgrades() -> void:
+	var box := _panel_box(660.0)
+	upgrades_panel = box.get_meta("holder")
+	root.add_child(upgrades_panel)
+	_modals.append(upgrades_panel)
+	box.add_child(_label("POWER-UPS", 64, GOLD, 12))
+	box.add_child(_label("Upgrades last forever", 26, Color("cfe9ff"), 4))
+	upgrades_box = VBoxContainer.new()
+	upgrades_box.add_theme_constant_override("separation", 12)
+	box.add_child(upgrades_box)
+	var close := _button("CLOSE", BLUE, "close", Vector2(480, 96))
+	close.pressed.connect(func(): upgrades_panel.visible = false)
+	box.add_child(close)
+	upgrades_panel.visible = false
+
+
+func show_upgrades(coins: int) -> void:
+	for ch in upgrades_box.get_children():
+		ch.queue_free()
+	for u in Upgrades.LIST:
+		var id: String = u.id
+		var lv := Upgrades.level(id)
+		var row := PanelContainer.new()
+		var sb := _style(Color(0.1, 0.08, 0.26), 24, 3)
+		sb.border_color = Color(u.color, 0.7)
+		sb.set_content_margin_all(12)
+		row.add_theme_stylebox_override("panel", sb)
+		var h := HBoxContainer.new()
+		h.add_theme_constant_override("separation", 12)
+		row.add_child(h)
+		var ic := IconDraw.new(u.icon, u.color)
+		ic.custom_minimum_size = Vector2(64, 64)
+		ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		h.add_child(ic)
+		var v := VBoxContainer.new()
+		v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		v.add_theme_constant_override("separation", 2)
+		h.add_child(v)
+		var tl := _label(String(u.name), 28, Color.WHITE, 4)
+		tl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		v.add_child(tl)
+		var pips := HBoxContainer.new()
+		pips.add_theme_constant_override("separation", 6)
+		for k in Upgrades.MAX:
+			var pip := Panel.new()
+			pip.custom_minimum_size = Vector2(40, 14)
+			pip.add_theme_stylebox_override("panel", _style(u.color if k < lv else Color(1, 1, 1, 0.15), 7, 0))
+			pips.add_child(pip)
+		v.add_child(pips)
+		var txt := Upgrades.describe(id, lv)
+		if lv < Upgrades.MAX:
+			txt += "\nNext: " + Upgrades.describe(id, lv + 1)
+		var dl := _label(txt, 20, Color("cfe9ff"), 3)
+		dl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		dl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		v.add_child(dl)
+		var c := Upgrades.cost(id)
+		var can := c > 0 and coins >= c
+		var b := _button("MAX" if c < 0 else fmt(c), GREEN if can else Color("6b6f86"), "" if c < 0 else "coin", Vector2(170, 84), 26)
+		b.disabled = not can
+		b.pressed.connect(func(): upgrade_buy.emit(id))
+		h.add_child(b)
+		upgrades_box.add_child(row)
+	if not upgrades_panel.visible:
+		_pop(upgrades_panel)
 
 
 # ---------------------------------------------------------------- chests
@@ -880,6 +1025,7 @@ func _build_race() -> void:
 	box.add_child(_label("Beat AI captains · win up to 600 coins", 24, Color("cfe9ff"), 4))
 	var sep := _label("WI-FI RACE · SAME NETWORK", 30, Color("8fe3ff"), 6)
 	box.add_child(sep)
+	sep.visible = not OS.has_feature("web")   # browsers can't host LAN games
 	race_lan_box = VBoxContainer.new()
 	race_lan_box.add_theme_constant_override("separation", 12)
 	box.add_child(race_lan_box)
@@ -936,7 +1082,7 @@ func _build_race() -> void:
 
 
 func show_race_lobby(lan_supported: bool, in_room: bool, is_host: bool, code: String, names: Array, status: String) -> void:
-	race_lan_box.visible = true
+	race_lan_box.visible = not OS.has_feature("web")
 	race_code_edit.get_parent().visible = lan_supported and not in_room
 	race_code_label.visible = in_room
 	race_code_label.text = ("ROOM CODE:  %s" % code) if is_host else ("IN ROOM %s" % code)
@@ -1098,6 +1244,7 @@ func modal_open() -> bool:
 ## Updates name, badges and timers on the menu's side buttons.
 func refresh_menu_buttons(pname: String, tasks_ready: int, chest_left: int, star_ready: bool) -> void:
 	_set_btn_text(profile_btn, pname)
+	set_badge(power_btn, "!" if Upgrades.any_affordable() else "")
 	set_badge(tasks_btn, str(tasks_ready) if tasks_ready > 0 else "")
 	if chest_left <= 0 or star_ready:
 		set_badge(chest_btn, "!")
@@ -1196,15 +1343,15 @@ func _tile_icon(cat: String, it: Dictionary) -> IconDraw:
 			ic.color2 = it.b
 			ic.set_kind("flag2", it.a)
 		"hat":
-			ic.color2 = Color("00e5ff")
+			ic.color2 = Color("e8433a")
 			ic.set_kind("hat", Color("f7f7f2") if it.kind == "cap" else (Color("ffc531") if it.kind == "crown" else Color("ff8fd8") if it.kind == "party" else Color("f0c96b") if it.kind == "straw" else Color("2b2f5a")))
 		"trail":
 			ic.color2 = it.b
 			ic.set_kind("wake", it.a)
 		"wall":
-			var wc := {"canyon": [Color("2a1f55"), Color("ff2fd0")], "harbor": [Color("3a3f6a"), Color("00e5ff")],
-				"pier": [Color("4e5872"), Color("ff2fd0")], "village": [Color("dfe6f5"), Color("00e5ff")],
-				"crystal": [Color("2a2346"), Color("6be3ff")], "candy": [Color("7a1a8a"), Color("ff4fa8")],
+			var wc := {"canyon": [Color("c98a5e"), Color("2f6b5a")], "harbor": [Color("b5523b"), Color("c9c3b8")],
+				"pier": [Color("9a6340"), Color("6fae4f")], "village": [Color("ff9f80"), Color("d65a4a")],
+				"crystal": [Color("2a2346"), Color("6be3ff")], "candy": [Color("ff8fc8"), Color("fff4fa")],
 				"temple": [Color("e2c27a"), Color("ffc531")], "neon": [Color("1c1f3a"), Color("ff2fd0")]}
 			var pair: Array = wc.get(String(it.style), [Color.GRAY, Color.WHITE])
 			ic.color2 = pair[1]
@@ -1372,7 +1519,7 @@ func _build_win() -> void:
 
 func _build_overlays() -> void:
 	popup_label = _label("", 60, GOLD, 14)
-	_place(popup_label, Control.PRESET_CENTER_TOP, -340, top + 260, 340, top + 350)
+	_place(popup_label, Control.PRESET_CENTER_TOP, -340, top + 410, 340, top + 500)
 	popup_label.pivot_offset = Vector2(340, 45)
 	popup_label.modulate.a = 0.0
 	root.add_child(popup_label)
@@ -1382,7 +1529,7 @@ func _build_overlays() -> void:
 	sb.set_content_margin_all(22)
 	intro_panel.add_theme_stylebox_override("panel", sb)
 	intro_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_place(intro_panel, Control.PRESET_CENTER_TOP, -310, top + 170, 310, top + 300)
+	_place(intro_panel, Control.PRESET_CENTER_TOP, -310, top + 270, 310, top + 400)
 	var iv := VBoxContainer.new()
 	iv.add_theme_constant_override("separation", 4)
 	intro_panel.add_child(iv)
@@ -1455,6 +1602,10 @@ func show_menu(level: int, coins: int, world_name: String, world_no: int, step: 
 		elif n == level:
 			col = Color("4e7cff")
 			border = Color.WHITE
+		if LevelGen.special_for(n) == "boss":
+			border = Color("ff4fd8")
+			if n > level:
+				col = Color(0.35, 0.05, 0.3, 0.8)
 		var sb := _style(col, 36, 0)
 		sb.content_margin_left = 0
 		sb.content_margin_right = 0
@@ -1471,6 +1622,9 @@ func show_menu(level: int, coins: int, world_name: String, world_no: int, step: 
 			var tw := node.create_tween().set_loops(4)
 			tw.tween_property(node, "scale", Vector2(1.15, 1.15), 0.35)
 			tw.tween_property(node, "scale", Vector2.ONE, 0.35)
+	var sp := LevelGen.special_for(level)
+	menu_hint.text = "BOSS FIGHT!\nHOLD TO SAIL" if sp == "boss" else ("COIN RUSH!\nHOLD TO SAIL" if sp == "rush" else "HOLD ANYWHERE\nTO SAIL")
+	menu_hint.label_settings.font_color = Color("ff6be0") if sp == "boss" else (GOLD if sp == "rush" else Color.WHITE)
 	logo.modulate.a = 0.0
 	logo.create_tween().tween_property(logo, "modulate:a", 1.0, 0.5)
 
@@ -1689,7 +1843,7 @@ func show_lose(can_continue: bool, progress_done: float, run_coins: int) -> void
 func show_lose_endless(score: int, best: int, new_best: bool, can_continue: bool, run_coins: int) -> void:
 	show_lose(can_continue, 0.0, run_coins)
 	lose_bar.visible = false
-	lose_share.visible = true
+	lose_share.visible = Ads.can_share()
 	lose_title.text = "NEW BEST!" if new_best else "SCORE %s" % fmt(score)
 	lose_title.label_settings.font_color = GOLD if new_best else Color("ff7b6b")
 	lose_info.text = ("%s  ·  previous best %s" % [fmt(score), fmt(best)]) if new_best else ("BEST  %s" % fmt(best))
@@ -1703,9 +1857,13 @@ func set_endless_best(best: int) -> void:
 	endless_best.text = "BEST %s" % fmt(best) if best > 0 else "NEW MODE!"
 
 
-func show_win(level: int, stars: int, run_coins: int) -> void:
+func show_win(level: int, stars: int, run_coins: int, special := "normal") -> void:
 	_only(win_panel)
 	win_title.text = "LEVEL %d CLEAR!" % level
+	if special == "boss":
+		win_title.text = "BOSS DEFEATED!"
+	elif special == "rush":
+		win_title.text = "COIN RUSH DONE!"
 	win_coins.text = "0"
 	var has_coins := run_coins > 0
 	win_mult.visible = has_coins
@@ -1795,6 +1953,75 @@ func set_effects(effects: Dictionary) -> void:
 		l.text = "" if v < 0.0 else "%.0f" % ceilf(v)
 
 
+## v = charge 0..1 (or time left while active).
+func set_fever(v: float, active: bool) -> void:
+	fever_bar.value = clampf(v, 0.0, 1.0)
+	fever_label.text = "FEVER!" if active else "FEVER"
+	if active:
+		var pulse := 0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.02)
+		fever_fill.bg_color = Color("ff4fd8").lerp(Color("ffd166"), pulse)
+		fever_label.label_settings.font_color = fever_fill.bg_color
+	else:
+		fever_fill.bg_color = Color("ff4fd8") if v < 0.99 else Color("ffd166")
+		fever_label.label_settings.font_color = Color("ff8be6")
+
+
+func combo_pop(n: int) -> void:
+	fever_box.pivot_offset = fever_box.size * 0.5
+	fever_box.scale = Vector2(1.12, 1.12)
+	fever_box.create_tween().tween_property(fever_box, "scale", Vector2.ONE, 0.2)
+	if n >= 3:
+		popup("COMBO x%d" % n, Color("ff8be6"))
+
+
+func fever_banner() -> void:
+	popup("FEVER!!  x2 COINS", Color("ff4fd8"))
+	popup_label.scale = Vector2(0.3, 0.3)
+	fever_flash.color.a = 0.35
+	if _fever_tw:
+		_fever_tw.kill()
+	_fever_tw = fever_flash.create_tween()
+	_fever_tw.tween_property(fever_flash, "color:a", 0.0, 0.5)
+
+
+## v < 0 hides the boss bar.
+func set_boss(v: float) -> void:
+	boss_box.visible = v >= 0.0
+	if v >= 0.0:
+		boss_bar.value = v
+		boss_box.pivot_offset = boss_box.size * 0.5
+		boss_box.scale = Vector2(1.08, 1.08)
+		boss_box.create_tween().tween_property(boss_box, "scale", Vector2.ONE, 0.15)
+
+
+func special_banner(title: String, desc: String, color: Color) -> void:
+	intro(title, desc)
+	intro_title.text = title
+	intro_title.label_settings.font_color = color
+
+
+## n < 0 hides the hearts (endless, races).
+func set_lives(n: int, max_lives: int) -> void:
+	lives_row.visible = n >= 0
+	if n < 0:
+		return
+	if lives_row.get_child_count() != max_lives:
+		for ch in lives_row.get_children():
+			ch.queue_free()
+		for k in max_lives:
+			var h := IconDraw.new("heart", Color("ff3d6e"))
+			h.custom_minimum_size = Vector2(38, 38)
+			lives_row.add_child(h)
+	for k in max_lives:
+		var h: IconDraw = lives_row.get_child(k)
+		var full := k < n
+		if h.kind == "heart" and not full:
+			h.pivot_offset = h.size * 0.5
+			h.scale = Vector2(1.6, 1.6)
+			h.create_tween().tween_property(h, "scale", Vector2.ONE, 0.3).set_trans(Tween.TRANS_BACK)
+		h.set_kind("heart" if full else "heart_empty")
+
+
 func set_countdown(n: int) -> void:
 	countdown_label.visible = n > 0
 	countdown_label.text = str(n)
@@ -1837,6 +2064,7 @@ func popup(text: String, color := GOLD) -> void:
 
 func intro(title: String, desc: String) -> void:
 	intro_title.text = "NEW: " + title
+	intro_title.label_settings.font_color = GOLD
 	intro_desc.text = desc
 	intro_panel.visible = true
 	intro_panel.modulate.a = 0.0

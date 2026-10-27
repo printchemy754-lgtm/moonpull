@@ -11,6 +11,9 @@ const COIN_VALUE := 10        # every coin you pick up is worth 10
 const CLOSE_CALL_BONUS := 20
 const FREE_REWARD := 500       # "free coins" rewarded ad
 const FREE_COOLDOWN := 120     # seconds between free-coin ads
+const SMASH_BONUS := 30        # FEVER smash through an obstacle
+const BOSS_BONUS := 1000
+const LIVES := 3               # free respawns per level (no ad needed)
 
 var state: State = State.MENU
 var level := 1
@@ -29,6 +32,13 @@ var boost_left := 0.0
 var slow_left := 0.0
 var magnet_left := 0.0
 var shield := false
+var combo := 0              # clean passes towards FEVER
+var fever_left := 0.0
+var special := "normal"     # "normal" | "rush" | "boss"
+var boss_hp := 0
+var lives := LIVES
+var assist := false         # helper mode after losing a level twice in a row
+var boss_max := 0
 var run_coins := 0          # coins earned this run (already x10)
 var banked := 0             # part of run_coins already saved
 var pearls_got := 0         # coin pickups (for stars)
@@ -83,13 +93,17 @@ var at_wait := 0.0
 var at_crashes := 0
 var at_level_crashes := 0
 var at_paused := false
+var at_forced := 0
+var _cg_playing := false
 var at_raced := false
 var at_endless := false
 var endless_level := 2
-const AT_LEVELS := 14
+const AT_LEVELS := 20
 
 
 func _ready() -> void:
+	if not Save.is_loaded:
+		await Save.loaded   # browser: wait for the cloud save
 	world = GameWorld.new()
 	add_child(world)
 	boat = Boat.new()
@@ -115,6 +129,8 @@ func _ready() -> void:
 		shop_index = Save.equipped(slot)
 		_refresh_shop())
 	ui.rank_closed.connect(_next_rank_up)
+	ui.upgrades_pressed.connect(func(): ui.show_upgrades(Save.coins))
+	ui.upgrade_buy.connect(_on_upgrade_buy)
 	ui.endless_pressed.connect(_start_endless)
 	ui.share_pressed.connect(_on_share)
 	ui.mystery_open.connect(_on_mystery)
@@ -175,6 +191,7 @@ func _ready() -> void:
 	_load_level()
 	ui.fade_in()
 	Ads.show_banner()
+	CrazySDK.loading_done()
 	if autotest:
 		call_deferred("_autotest_menus")
 
@@ -187,7 +204,7 @@ func _notification(what: int) -> void:
 # =============================================================== input
 
 func _unhandled_input(event: InputEvent) -> void:
-	if autotest:
+	if autotest or ui == null:
 		return
 	var is_press := false
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
@@ -211,12 +228,34 @@ func _start_run() -> void:
 	state = State.PLAYING
 	cam_mode = "chase"
 	ui.show_hud(level)
+	_run_perks()
+	if special == "boss":
+		ui.special_banner("BOSS FIGHT", "Pass obstacles to blast the mothership!", Color("ff4fd8"))
+	elif special == "rush":
+		ui.special_banner("COIN RUSH", "Bonus level: grab every coin!", Color("ffd166"))
 	Analytics.event("level_start", {"level_name": "level_%d" % level, "level": level})
+
+
+## Upgrades that kick in at the start of a run.
+func _run_perks() -> void:
+	if assist:
+		shield = true
+		boat.show_shield(true)
+		ui.special_banner("HELPER MODE", "Slower boat + a free shield. You got this!", Color("7dffb0"))
+		return
+	if randi() % 100 < Upgrades.shield_chance():
+		shield = true
+		boat.show_shield(true)
+		ui.popup("START SHIELD!", Color("54e0ff"))
+	if special == "rush":
+		combo = Upgrades.fever_need() - 2
 
 
 # =============================================================== loop
 
 func _process(delta: float) -> void:
+	if ui == null:
+		return   # still waiting for the save (browser)
 	t += delta
 	if autotest:
 		_autotest_tick(delta)
@@ -268,6 +307,10 @@ func _process(delta: float) -> void:
 			water_vel = 0.0
 			water_y = lerpf(water_y, LevelGen.WATER_REST + 0.6, 1.0 - exp(-2.0 * delta))
 
+	var playing := state == State.PLAYING or state == State.COUNTDOWN
+	if playing != _cg_playing:
+		_cg_playing = playing
+		CrazySDK.gameplay(playing)
 	if mode == "race_ai" or mode == "race_lan":
 		_race_tick(delta)
 	elif mode == "endless" and (state == State.PLAYING or state == State.COUNTDOWN):
@@ -284,12 +327,23 @@ func _process(delta: float) -> void:
 	_update_camera(delta)
 
 
+## How much the hull may scrape before it counts as a crash.
+func _grace() -> float:
+	if mode != "levels":
+		return LevelGen.HIT_GRACE
+	if assist:
+		return 0.32
+	return 0.26 if level <= 8 else LevelGen.HIT_GRACE
+
+
 func _speed_factor() -> float:
 	var f := 1.0
 	if boost_left > 0.0:
 		f *= LevelGen.BOOST_MULT
 	if slow_left > 0.0:
 		f *= LevelGen.SLOW_MULT
+	if fever_left > 0.0:
+		f *= 1.15
 	return f
 
 
@@ -315,7 +369,12 @@ func _tick_effects(delta: float) -> void:
 	streak_timer = maxf(streak_timer - delta, 0.0)
 	if streak_timer == 0.0:
 		streak = 0
+	if fever_left > 0.0:
+		fever_left = maxf(fever_left - delta, 0.0)
+		if fever_left == 0.0:
+			_end_fever()
 	ui.set_effects({"boost": boost_left, "slow": slow_left, "shield": -1.0 if shield else 0.0, "magnet": magnet_left})
+	ui.set_fever(fever_left / Upgrades.fever_time() if fever_left > 0.0 else float(combo) / Upgrades.fever_need(), fever_left > 0.0)
 
 
 func _update_camera(delta: float) -> void:
@@ -350,7 +409,7 @@ func _update_camera(delta: float) -> void:
 		_:
 			pos = Vector3(1.4, water_y * 0.6 + 4.7, boat_z - 8.4)
 			look = Vector3(0.0, water_y * 0.6 + 1.1, boat_z + 9.0)
-			fov = 74.0 + (9.0 if boost_left > 0.0 else 0.0) - (4.0 if slow_left > 0.0 else 0.0)
+			fov = 74.0 + (9.0 if boost_left > 0.0 else 0.0) - (4.0 if slow_left > 0.0 else 0.0) + (7.0 if fever_left > 0.0 else 0.0)
 	var k := 1.0 - exp(-rate * delta)
 	if not cam_ready:
 		cam_pos = pos
@@ -382,26 +441,29 @@ func _check_items() -> void:
 		var obstacle := LevelGen.is_obstacle(e.kind)
 		if back > z1:
 			e.passed = true
-			if obstacle and e.min_clear < CLOSE_CALL and not e.get("smashed", false):
-				_close_call()
+			if obstacle and not e.get("smashed", false):
+				var close: bool = e.min_clear < CLOSE_CALL
+				if close:
+					_close_call()
+				_passed_obstacle(2 if close else 1)
 			continue
 		if obstacle:
 			if e.get("smashed", false):
 				continue
-			var clear := LevelGen.NONE_HIGH
-			var h := LevelGen.h_at(e, run_t)
-			var b := LevelGen.b_at(e, run_t)
-			if h > LevelGen.NONE_LOW:
-				clear = minf(clear, water_y - LevelGen.DRAFT - h)
-			if b < LevelGen.NONE_HIGH:
-				clear = minf(clear, b - LevelGen.BOAT_TOP - water_y)
-			if clear + LevelGen.HIT_GRACE < 0.0:
+			var clear := LevelGen.clearance(e, run_t, water_y)
+			if clear + _grace() < 0.0:
+				if fever_left > 0.0:
+					_fever_smash(e)
+					continue
 				if shield:
 					_use_shield(e)
 					continue
 				_crash(i)
 				return
 			e.min_clear = minf(e.min_clear, clear)
+		elif LevelGen.is_current(e.kind):
+			if not e.taken:
+				_take_current(e)
 		elif not e.taken and absf(water_y + LevelGen.PICK_OFFSET - float(e.y)) < LevelGen.PICK_RANGE * 1.2:
 			_take_pickup(e)
 
@@ -414,14 +476,14 @@ func _check_pearls() -> void:
 		if dz < -2.0 or dz > 10.0:
 			continue
 		var hit := absf(dz) < 1.0 and absf(water_y + LevelGen.PICK_OFFSET - float(p.y)) < LevelGen.PICK_RANGE
-		var pulled := magnet_left > 0.0 and dz > -1.0 and dz < 9.0
+		var pulled := (magnet_left > 0.0 or fever_left > 0.0) and dz > -1.0 and dz < 9.0
 		if hit or pulled:
 			_collect(p)
 
 
 func _collect(p: Dictionary) -> void:
 	world.take_pearl(p, boat.global_position + Vector3(0.0, 1.0, 0.0))
-	var value := COIN_VALUE * (2 if boost_left > 0.0 else 1)
+	var value := Upgrades.coin_value() * (2 if boost_left > 0.0 else 1) * (2 if fever_left > 0.0 else 1)
 	run_coins += value
 	mission_coins += value
 	run_xp += Ranks.XP_PICKUP
@@ -453,7 +515,7 @@ func _take_pickup(e: Dictionary) -> void:
 			Sfx.play("power")
 			ui.popup("SHIELD!", Color("54e0ff"))
 		"magnet":
-			magnet_left = LevelGen.MAGNET_TIME
+			magnet_left = Upgrades.magnet_time()
 			boat.show_magnet(true)
 			Sfx.play("power")
 			ui.popup("MAGNET!", Color("ff4fd8"))
@@ -461,12 +523,83 @@ func _take_pickup(e: Dictionary) -> void:
 
 func _use_shield(e: Dictionary) -> void:
 	shield = false
+	combo = 0
+	_boss_damage(e)
 	boat.show_shield(false)
 	world.smash(e)
 	shake = 0.25
 	Sfx.play("shield_pop")
 	Sfx.vibrate(60)
 	ui.popup("SAVED BY SHIELD!", Color("54e0ff"))
+
+
+# =============================================================== FEVER, currents, boss
+
+## A clean pass charges FEVER (close calls count double).
+func _passed_obstacle(amount: int) -> void:
+	_boss_damage({})
+	if fever_left > 0.0:
+		return
+	combo += amount
+	if combo >= Upgrades.fever_need():
+		_start_fever()
+	elif combo >= 3:
+		ui.combo_pop(combo)
+
+
+func _start_fever() -> void:
+	combo = 0
+	fever_left = Upgrades.fever_time()
+	boat.show_fever(true)
+	Save.fevers += 1
+	_mission("fever")
+	Sfx.play("boost", 0.8)
+	Sfx.vibrate(50)
+	ui.fever_banner()
+	shake = 0.2
+	Analytics.event("fever", {"level": level})
+
+
+func _end_fever() -> void:
+	fever_left = 0.0
+	boat.show_fever(false)
+	ui.set_fever(0.0, false)
+
+
+func _fever_smash(e: Dictionary) -> void:
+	world.smash(e)
+	_boss_damage(e)
+	run_coins += SMASH_BONUS
+	mission_coins += SMASH_BONUS
+	ui.set_coins(Save.coins + run_coins - banked)
+	ui.popup("SMASH!  +%d" % SMASH_BONUS, Color("ff4fd8"))
+	_mission("smash")
+	shake = 0.22
+	Sfx.play("shield_pop", 1.2)
+	Sfx.vibrate(35)
+
+
+## Geysers throw the tide up, vortexes suck it down.
+func _take_current(e: Dictionary) -> void:
+	e.taken = true
+	var up: bool = e.kind == "geyser"
+	water_vel = LevelGen.CURRENT_V * (1.0 if up else -1.0)
+	world.trigger_current(e)
+	shake = 0.18
+	Sfx.play("boost" if up else "slow", 0.7 if up else 0.6)
+	Sfx.vibrate(30)
+
+
+## Every obstacle you get past (or smash) hurts the boss.
+func _boss_damage(e: Dictionary) -> void:
+	if special != "boss" or boss_hp <= 0 or e.get("boss_hit", false):
+		return
+	if not e.is_empty():
+		e["boss_hit"] = true
+	boss_hp -= 1
+	world.boss_hit(boat.global_position + Vector3(0.0, 1.4, 0.8), boss_hp <= 0)
+	ui.set_boss(float(boss_hp) / maxf(boss_max, 1.0))
+	Sfx.play("close", 0.7)
 
 
 func _close_call() -> void:
@@ -481,6 +614,9 @@ func _close_call() -> void:
 func _crash(i: int) -> void:
 	state = State.DEAD
 	crash_index = i
+	combo = 0
+	if fever_left > 0.0:
+		_end_fever()
 	holding = false
 	water_vel = 0.0
 	shake = 0.45
@@ -494,16 +630,41 @@ func _crash(i: int) -> void:
 		if state == State.DEAD and (mode == "race_ai" or mode == "race_lan"):
 			_race_respawn()
 		return
+	if mode == "levels" and lives > 1:
+		lives -= 1
+		ui.set_lives(lives, LIVES)
+		await get_tree().create_timer(0.8).timeout
+		if state == State.DEAD and mode == "levels":
+			ui.popup("%d %s LEFT" % [lives, "LIFE" if lives == 1 else "LIVES"], Color("ff6b8b"))
+			_revive(false)
+		return
 	await get_tree().create_timer(0.75).timeout
 	if state == State.DEAD:
 		_bank()
 		if mode == "endless":
 			_endless_over()
 			return
+		lives = 0
+		ui.set_lives(0, LIVES)
+		if Save.fail_level == level:
+			Save.fail_count += 1
+		else:
+			Save.fail_level = level
+			Save.fail_count = 1
+		var pct := int(clampf(boat_z / world.finish_z, 0.0, 1.0) * 100.0)
+		var best := int(Save.best_progress.get(str(level), 0))
+		if pct > best:
+			Save.best_progress[str(level)] = pct
+		Save.save()
 		ui.set_coins(Save.coins)
 		Analytics.event("level_end", {"level_name": "level_%d" % level, "success": 0, "level": level,
 			"progress": int(clampf(boat_z / world.finish_z, 0.0, 1.0) * 100.0), "obstacle": String(world.items[crash_index].kind)})
 		ui.show_lose(not continue_used, clampf(boat_z / world.finish_z, 0.0, 1.0), run_coins)
+		if pct > best and best > 0:
+			ui.lose_info.text = "NEW RECORD: %d%%!" % pct
+			ui.lose_info.label_settings.font_color = GameUI.GOLD
+		elif Save.fail_count >= 2:
+			ui.lose_info.text = "%d%% of the way. Next try is easier!" % pct
 
 
 func _stars() -> int:
@@ -523,10 +684,23 @@ func _win() -> void:
 	var stars := _stars()
 	Sfx.play("win")
 	Sfx.vibrate(40)
+	if special == "boss":
+		Save.bosses += 1
+		var bonus := BOSS_BONUS + 250 * Themes.world_index(level)
+		run_coins += bonus
+		world.boss_explode()
+		shake = 0.6
+		ui.popup("BOSS DEFEATED!  +%s" % GameUI.fmt(bonus), Color("ff4fd8"))
+		Analytics.event("boss_defeated", {"level": level})
+	if fever_left > 0.0:
+		_end_fever()
+	CrazySDK.happy()
 	_bank()
 	Analytics.event("level_end", {"level_name": "level_%d" % level, "success": 1, "level": level, "stars": stars, "coins": run_coins, "seconds": int(run_t)})
 	if level == 2:
 		Analytics.event("tutorial_complete")
+	Save.fail_count = 0
+	Save.best_progress.erase(str(level))
 	Save.set_stars(level, stars)
 	Save.set_level(level + 1)
 	Save.add_xp(Ranks.XP_WIN + stars * Ranks.XP_STAR)
@@ -541,11 +715,16 @@ func _win() -> void:
 	ui.set_effects({})
 	await get_tree().create_timer(0.9).timeout
 	if state == State.WON:
-		ui.show_win(level, stars, run_coins)
+		ui.show_win(level, stars, run_coins, special)
 
 
-func _revive() -> void:
-	continue_used = true
+## from_ad = the paid "continue"; false = a free life (levels mode).
+func _revive(from_ad := true) -> void:
+	if from_ad:
+		continue_used = true
+		if mode == "levels":
+			lives = 1
+			ui.set_lives(lives, LIVES)
 	var e: Dictionary = world.items[crash_index]
 	e.passed = false
 	e.min_clear = LevelGen.NONE_HIGH
@@ -556,6 +735,11 @@ func _revive() -> void:
 			hi = float(e.b) - float(e.amp) - LevelGen.BOAT_TOP - 0.15
 		"breather":
 			lo = float(e.h) + float(e.amp) + LevelGen.DRAFT + 0.15
+		"mine":
+			hi = float(e.m0) - LevelGen.BOAT_TOP - 0.1
+		"slider":
+			lo = float(e.h) + float(e.amp) * 0.5 + LevelGen.DRAFT + 0.1
+			hi = float(e.b) + float(e.amp) * 0.5 - LevelGen.BOAT_TOP - 0.1
 		_:
 			if e.h > LevelGen.NONE_LOW:
 				lo = float(e.h) + LevelGen.DRAFT + 0.1
@@ -574,6 +758,7 @@ func _revive() -> void:
 	state = State.COUNTDOWN
 	countdown_left = 2.0
 	_show_run_hud()
+	ui.set_lives(lives if mode == "levels" else -1, LIVES)
 	ui.set_countdown(2)
 
 
@@ -602,17 +787,19 @@ func _intros() -> void:
 
 
 func _tutorial() -> void:
-	if level > 2 or mode != "levels":
+	if mode != "levels" or (level > 6 and not assist):
 		return
 	var e := _next_obstacle()
 	if e.is_empty() or float(e.z) - boat_z > 24.0:
 		ui.hide_hint()
 		return
-	var r := LevelGen.safe_range(e, run_t)
+	var eta := maxf(0.0, (float(e.z) - boat_z) / maxf(speed * _speed_factor(), 0.1))
+	var r := LevelGen.safe_range(e, run_t + eta, water_y)
+	var short := level > 2
 	if water_y < r.x + 0.1:
-		ui.hint("HOLD TO RAISE THE TIDE", true)
+		ui.hint("HOLD!" if short else "HOLD TO RAISE THE TIDE", true)
 	elif water_y > r.y - 0.1:
-		ui.hint("LET GO TO LOWER IT", false)
+		ui.hint("LET GO!" if short else "LET GO TO LOWER IT", false)
 	else:
 		ui.hide_hint()
 
@@ -623,6 +810,10 @@ func _load_level() -> void:
 	_clear_race()
 	mode = "levels"
 	_setup_run(LevelGen.generate(level), level)
+	assist = Save.fail_level == level and Save.fail_count >= 2
+	if assist:
+		speed *= 0.82
+	ui.set_lives(LIVES, LIVES)
 	state = State.MENU
 	cam_mode = "menu"
 	_show_menu()
@@ -651,6 +842,21 @@ func _setup_run(new_data: Dictionary, theme_level: int) -> void:
 	magnet_left = 0.0
 	shield = false
 	streak = 0
+	lives = LIVES
+	assist = false
+	ui.set_lives(-1, LIVES)
+	combo = 0
+	fever_left = 0.0
+	boat.show_fever(false)
+	special = String(data.get("special", "normal"))
+	boss_max = 0
+	if special == "boss":
+		for it in world.items:
+			if LevelGen.is_obstacle(it.kind):
+				boss_max += 1
+	boss_hp = boss_max
+	ui.set_fever(0.0, false)
+	ui.set_boss(1.0 if special == "boss" else -1.0)
 	boat.reset_pose()
 	boat.apply(Save.boat_cfg())
 	boat.show_shield(false)
@@ -815,6 +1021,8 @@ func _on_rewarded_finished(earned: bool) -> void:
 	var what := pending_reward
 	pending_reward = ""
 	Analytics.event("ad_rewarded", {"placement": what, "earned": 1 if earned else 0})
+	if not earned and OS.has_feature("web"):
+		ui.popup("No ad right now, try later", Color("ff9b8b"))
 	match what:
 		"continue":
 			if earned and state == State.DEAD:
@@ -858,6 +1066,17 @@ func _refresh_menu_buttons() -> void:
 	ui.refresh_menu_buttons(Save.player_name, Missions.claimable(), Save.chest_seconds_left(), Save.star_chest_ready())
 	var r := Ranks.from_xp(Save.xp)
 	ui.set_rank(r[0], r[1], r[2], Ranks.title(r[0]))
+
+
+func _on_upgrade_buy(id: String) -> void:
+	if Upgrades.buy(id):
+		Sfx.play("power")
+		Sfx.vibrate(30)
+		ui.set_coins(Save.coins)
+		ui.popup("UPGRADED!", Color("7dffb0"))
+		Analytics.event("upgrade", {"id": id, "level": Upgrades.level(id)})
+	ui.show_upgrades(Save.coins)
+	_refresh_menu_buttons()
 
 
 func _show_tasks() -> void:
@@ -949,6 +1168,7 @@ func _begin_endless() -> void:
 	countdown_left = 2.0
 	ui.show_endless_hud(Save.best_endless)
 	ui.set_countdown(2)
+	_run_perks()
 
 
 func _endless_over() -> void:
@@ -956,6 +1176,7 @@ func _endless_over() -> void:
 	var prev := Save.best_endless
 	var new_best := score > prev
 	if new_best:
+		CrazySDK.happy()
 		Save.best_endless = score
 		world.burst_confetti(boat.global_position + Vector3(0.0, 2.5, 2.0))
 		Sfx.play("win")
@@ -1388,13 +1609,19 @@ func _autotest_menus() -> void:
 	print("AUTOTEST lobby: in_room=%s code=%s status=%s" % [str(Net.in_room), Net.room_code, lobby_status])
 	_on_race_leave()
 	ui.settings_panel.visible = false
+	Save.coins += 20000
+	ui.upgrades_pressed.emit()
+	for id in ["fever", "charge", "coin", "magnet", "shield", "fever"]:
+		_on_upgrade_buy(id)
+	ui.upgrades_panel.visible = false
+	print("AUTOTEST upgrades: %s" % str(Save.upgrades))
 	print("AUTOTEST menus ok (workshop items owned: %d, boat %s)" % [Save.owned_count(), str(Save.boat_cfg())])
 	at_wait = 0.3
 
 
 func _autotest_tick(delta: float) -> void:
 	at_frames += 1
-	if at_frames > 60 * 60 * 30:
+	if at_frames > 60 * 60 * 45:
 		print("AUTOTEST FAILED: timeout at level %d" % level)
 		get_tree().quit(1)
 		return
@@ -1415,14 +1642,25 @@ func _autotest_tick(delta: float) -> void:
 						_start_endless()
 						at_wait = 2.0
 						return
-					print("AUTOTEST PASSED levels=%d crashes=%d frames=%d" % [AT_LEVELS, at_crashes, at_frames])
+					print("AUTOTEST PASSED levels=%d crashes=%d frames=%d fevers=%d bosses=%d" % [AT_LEVELS, at_crashes, at_frames, Save.fevers, Save.bosses])
 					get_tree().quit(0)
 					return
-				print("AUTOTEST level %d (%s): %d items, %d pearls" % [level, Themes.for_level(level).name, world.items.size(), world.pearls.size()])
+				print("AUTOTEST level %d (%s, %s): %d items, %d pearls" % [level, Themes.for_level(level).name, special, world.items.size(), world.pearls.size()])
 				at_level_crashes = 0
 				_start_run()
 		State.PLAYING, State.COUNTDOWN:
 			holding = _autopilot_hold()
+			if level == 3 and at_forced == 0 and boat_z > 30.0 and state == State.PLAYING:
+				at_forced = 1
+				for i in world.items.size():
+					var it: Dictionary = world.items[i]
+					if LevelGen.is_obstacle(it.kind) and not it.passed:
+						_crash(i)
+						break
+				print("AUTOTEST forced crash, lives left %d" % lives)
+			elif level == 3 and at_forced == 1 and state == State.PLAYING and boat_z > 30.0:
+				at_forced = 2
+				print("AUTOTEST revived for free (lives=%d)" % lives)
 			if level == 2 and not at_paused and boat_z > 30.0:
 				at_paused = true
 				_on_pause()
@@ -1478,24 +1716,11 @@ func _autopilot_hold() -> bool:
 		if float(e.z) + float(e.depth) * 0.5 < boat_z - LevelGen.BOAT_HALF_LEN:
 			continue
 		if LevelGen.is_obstacle(e.kind):
+			if fever_left > 0.5:
+				continue
 			var eta := maxf(0.0, (float(e.z) - boat_z) / maxf(speed * _speed_factor(), 0.1))
-			var lo := -INF
-			var hi := INF
-			for k in range(-3, 4):
-				var r := LevelGen.safe_range(e, run_t + eta + k * 0.1)
-				lo = maxf(lo, r.x + 0.12)
-				hi = minf(hi, r.y - 0.12)
-			if hi < lo:
-				if e.kind == "drawbridge":
-					lo = LevelGen.WATER_MIN
-					hi = float(e.b) - float(e.amp) - LevelGen.BOAT_TOP - 0.12
-				else:
-					lo = float(e.h) + float(e.amp) + LevelGen.DRAFT + 0.12
-					hi = LevelGen.WATER_MAX
-			tgt = (lo + hi) * 0.5 if hi < LevelGen.WATER_MAX else minf(lo + 0.35, LevelGen.WATER_MAX)
-			if e.h <= LevelGen.NONE_LOW:
-				tgt = maxf(LevelGen.WATER_MIN, hi - 0.35)
-		elif not e.taken and e.kind != "slow":
+			tgt = LevelGen.pilot_level(e, run_t + eta, water_y)
+		elif not e.taken and e.kind != "slow" and not LevelGen.is_current(e.kind):
 			tgt = float(e.y) - LevelGen.PICK_OFFSET
 		else:
 			continue
