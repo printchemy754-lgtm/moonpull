@@ -1,10 +1,13 @@
 class_name Walls
 extends Node3D
-## River banks. Left and right can use different styles (bought in the Workshop).
+## Floating city scenery on both sides of the track (styles bought in the
+## Workshop, left and right can differ). Built in short segments that follow
+## the track's curves, a few metres of empty space away from its edges.
 ## All pieces with the same material are merged into one mesh, so even detailed
 ## walls cost only a handful of draw calls on phones.
 
-const INNER := 5.0          # inner face distance from the river centre
+const INNER := 9.0          # distance of the scenery from the track centre
+const Y_OFF := -6.5         # scenery sits below the track: you roll above a city
 const STEP_MIN := 6.0
 const STEP_MAX := 11.0
 
@@ -22,6 +25,8 @@ var _seed := 1
 var _limit := 100.0
 var _cursor := {-1.0: -40.0, 1.0: -40.0}
 var _built_to := -40.0
+var track: Track
+var _seg_xf := Transform3D.IDENTITY
 
 
 ## Resets the banks. Chunks are then created by ensure() as needed.
@@ -57,10 +62,12 @@ func _build_chunk(z_end: float) -> void:
 	var idx := int((_built_to + 40.0) / CHUNK)
 	for side in [-1.0, 1.0]:
 		rng.seed = _seed * 31 + idx * 977 + (7 if side < 0.0 else 13)
-		var style: String = _styles[0] if side < 0.0 else _styles[1]
+		var style: String = _styles[0] if side > 0.0 else _styles[1]   # +s = screen left
 		var z: float = _cursor[side]
 		while z < z_end:
 			var seg := rng.randf_range(STEP_MIN, STEP_MAX)
+			if track:
+				_seg_xf = track.frame(clampf(z, 0.0, track.length)) * Transform3D(Basis.IDENTITY, Vector3(0.0, Y_OFF, -z))
 			match style:
 				"harbor": _harbor(side, z, seg)
 				"pier": _pier(side, z, seg)
@@ -97,7 +104,7 @@ func _put(mesh: Mesh, mat: Material, pos: Vector3, rot := Vector3.ZERO, scl := V
 		st.begin(Mesh.PRIMITIVE_TRIANGLES)
 		_batches[mat] = st
 	var basis := Basis.from_euler(rot) * Basis.from_scale(scl)
-	(_batches[mat] as SurfaceTool).append_from(mesh, 0, Transform3D(basis, pos))
+	(_batches[mat] as SurfaceTool).append_from(mesh, 0, _seg_xf * Transform3D(basis, pos))
 
 
 func _box(size: Vector3, pos: Vector3, mat: Material, rot := Vector3.ZERO) -> void:
@@ -147,8 +154,8 @@ func _x(side: float, d: float) -> float:
 
 ## Solid ground block behind everything, from the inner face outward.
 func _mass(side: float, z: float, seg: float, top: float, col: Color, from_d := 0.0) -> void:
-	var h := top - LevelGen.FLOOR_Y + 1.0
-	_box(Vector3(30.0, h, seg + 0.02), Vector3(_x(side, from_d + 15.0), LevelGen.FLOOR_Y - 1.0 + h * 0.5, z + seg * 0.5), _m(col))
+	var h := top - LevelGen.FLOOR_Y + 9.0
+	_box(Vector3(30.0, h, seg + 0.4), Vector3(_x(side, from_d + 15.0), LevelGen.FLOOR_Y - 9.0 + h * 0.5, z + seg * 0.5), _m(col))
 
 
 # ------------------------------------------------------------------ styles
@@ -366,6 +373,8 @@ func _tree(base: Vector3) -> void:
 
 
 func _waterfall(x: float, top: float, z: float, side: float) -> void:
+	if track:
+		return   # no waterfalls in space
 	var q := QuadMesh.new()
 	q.size = Vector2(1.5, top - LevelGen.FLOOR_Y)
 	var sm := ShaderMaterial.new()

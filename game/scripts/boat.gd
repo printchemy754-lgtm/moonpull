@@ -1,11 +1,12 @@
 class_name Boat
 extends Node3D
-## The player's boat: modular (hull + paint + sails + flag + captain's hat + wake),
-## crewed by the Captain, who raises both arms to pull the moon while you hold.
-## Every hull fits the same hitbox (keel 0.3 below, top 1.5 above the waterline).
+## The player's moon-ball: a glowing shell (style + paint + glow colour) that
+## rolls, with the little Captain standing upright inside (hat, flag), and a
+## light trail behind. The node sits on the floor; the ball's centre is at BALL_R.
 
 const SKIN := Color("fcd2b0")
 const NAVY := Color("23285c")
+const BALL_R := 0.62        # visual radius (collisions use LevelGen.R)
 
 var pivot: Node3D
 var model: Node3D
@@ -26,6 +27,9 @@ var fever_fire: CPUParticles3D
 var cfg: Dictionary = {}
 var _mats := {}
 var _pull := 0.0
+var shell: Node3D          # rolls
+var still: Node3D          # rings that don't roll (planet style)
+var _lean := 0.0
 
 
 func _ready() -> void:
@@ -53,45 +57,115 @@ func apply(new_cfg: Dictionary) -> void:
 	model = Node3D.new()
 	pivot.add_child(model)
 	var paint: Color = Custom.item("paint", cfg.get("paint", 0)).color
-	var sail: Color = Custom.item("sail", cfg.get("sail", 0)).color
+	var glow: Color = Custom.item("sail", cfg.get("sail", 0)).color
 	var hat: String = Custom.item("hat", cfg.get("hat", 0)).kind
-	match int(cfg.get("hull", 0)):
-		1: _tug(paint, sail, hat)
-		2: _speedster(paint, sail, hat)
-		3: _junk(paint, sail, hat)
-		4: _duck(paint, sail, hat)
-		5: _skiff(paint, sail, hat)
-		_: _dinghy(paint, sail, hat)
-	_tech_kit(sail, int(cfg.get("hull", 0)) == 4)
+	shell = Node3D.new()
+	shell.position = Vector3(0.0, BALL_R, 0.0)
+	model.add_child(shell)
+	still = Node3D.new()
+	still.position = Vector3(0.0, BALL_R, 0.0)
+	model.add_child(still)
+	_shell(int(cfg.get("hull", 0)), paint, glow)
+	# the captain stands inside, always upright
+	_captain(Vector3(0.0, 0.08, 0.0), hat, glow)
+	captain.scale = Vector3(0.62, 0.62, 0.62)
+	_cyl(0.32, 0.36, 0.06, _m(Color("1c1f3a")), Vector3(0.0, 0.07, 0.0), Vector3.ZERO, 16)
+	_cyl(0.36, 0.36, 0.02, _m(glow, 2.5, 0.0), Vector3(0.0, 0.1, 0.0), Vector3.ZERO, 16)
+	var pole := Node3D.new()
+	pole.position = Vector3(0.0, 0.0, -0.12)
+	captain.add_child(pole)
+	_cyl(0.025, 0.025, 0.7, _m(Color("c8d2ff")), Vector3(0.0, 0.75, 0.0), Vector3.ZERO, 6, pole)
+	flag = Node3D.new()
+	flag.position = Vector3(0.0, 1.0, 0.0)
+	pole.add_child(flag)
+	var f := Custom.item("flag", cfg.get("flag", 0))
+	_box(Vector3(0.03, 0.2, 0.34), _m(f.a, 0.0, 0.012), Vector3(0.0, 0.0, -0.17), Vector3.ZERO, flag)
+	if String(f.pattern) != "solid":
+		_box(Vector3(0.035, 0.06, 0.34), _m(f.b, 0.0, 0.0), Vector3(0.0, 0.0, -0.17), Vector3.ZERO, flag)
 	_set_trail(Custom.item("trail", cfg.get("trail", 0)))
 
 
+## Shell styles (the six "hulls" in the Workshop).
+func _shell(style: int, paint: Color, glow: Color) -> void:
+	var glass := StandardMaterial3D.new()
+	glass.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	glass.albedo_color = Color(paint.r, paint.g, paint.b, 0.28)
+	glass.roughness = 0.05
+	glass.metallic = 0.3
+	glass.rim_enabled = true
+	glass.rim = 1.0
+	glass.rim_tint = 0.2
+	glass.emission_enabled = true
+	glass.emission = paint * 0.25
+	glass.cull_mode = BaseMaterial3D.CULL_BACK
+	var band := _m(glow, 2.6, 0.0)
+	var solid := _m(paint)
+	match style:
+		1:   # TECH: glass + three glowing bands
+			_sphere(BALL_R, glass, Vector3.ZERO, Vector3.ONE, shell)
+			_torus(BALL_R - 0.03, BALL_R + 0.03, band, Vector3.ZERO, Vector3.ZERO, shell)
+			_torus(BALL_R - 0.03, BALL_R + 0.03, band, Vector3.ZERO, Vector3(PI * 0.5, 0.0, 0.0), shell)
+			_torus(BALL_R - 0.03, BALL_R + 0.03, _m(paint.lightened(0.3), 1.2, 0.0), Vector3.ZERO, Vector3(0.0, 0.0, PI * 0.5), shell)
+		2:   # GYRO: open cage of rings, no glass
+			for k in 4:
+				_torus(BALL_R - 0.04, BALL_R + 0.03, solid if k % 2 == 0 else band, Vector3.ZERO, Vector3(0.0, TAU * k / 8.0, PI * 0.5), shell)
+			_torus(BALL_R - 0.04, BALL_R + 0.03, band, Vector3.ZERO, Vector3.ZERO, shell)
+		3:   # PLANET: glass + big tilted ring that stays level
+			_sphere(BALL_R, glass, Vector3.ZERO, Vector3.ONE, shell)
+			_torus(BALL_R + 0.12, BALL_R + 0.24, band, Vector3.ZERO, Vector3(0.35, 0.0, 0.2), still)
+			for k in 6:
+				var a := TAU * k / 6.0
+				_sphere(0.05, _m(Color.WHITE, 2.0, 0.0), Vector3(cos(a), 0.4, sin(a)) * (BALL_R - 0.02), Vector3.ONE, shell)
+		4:   # DUCKY: rubber-duck shell with beak and eyes
+			var duck := glass.duplicate() as StandardMaterial3D
+			duck.albedo_color = Color(paint.r, paint.g, paint.b, 0.45)
+			_sphere(BALL_R, duck, Vector3.ZERO, Vector3.ONE, shell)
+			_sphere(0.16, _m(Color("ff8a1a")), Vector3(0.0, 0.05, BALL_R), Vector3(1.2, 0.6, 1.0), shell)
+			for sx in [-0.2, 0.2]:
+				_sphere(0.07, _m(Color.WHITE), Vector3(sx, 0.25, BALL_R - 0.08), Vector3.ONE, shell)
+				_sphere(0.035, _m(Color("15122b"), 0.0, 0.0), Vector3(sx, 0.25, BALL_R - 0.02), Vector3.ONE, shell)
+		5:   # MOON: crater shell, half open window
+			_sphere(BALL_R, glass, Vector3.ZERO, Vector3.ONE, shell)
+			var rock := _m(Color("d8d4e8"))
+			for k in 9:
+				var a2 := TAU * k / 9.0
+				var dir := Vector3(cos(a2) * 0.8, sin(a2 * 2.0) * 0.6, sin(a2)).normalized()
+				if dir.z > 0.5:
+					continue
+				_sphere(0.17, rock, dir * (BALL_R - 0.06), Vector3(1.0, 1.0, 0.45), shell).look_at_from_position(dir * (BALL_R - 0.06), Vector3.ZERO, Vector3.UP if absf(dir.y) < 0.9 else Vector3.RIGHT)
+			_torus(BALL_R - 0.02, BALL_R + 0.04, band, Vector3.ZERO, Vector3.ZERO, shell)
+		_:   # BUBBLE: simple glass ball with one glowing equator
+			_sphere(BALL_R, glass, Vector3.ZERO, Vector3.ONE, shell)
+			_torus(BALL_R - 0.02, BALL_R + 0.04, band, Vector3.ZERO, Vector3(0.0, 0.0, PI * 0.5), shell)
+			_sphere(0.09, _m(Color.WHITE, 1.0, 0.0), Vector3(-0.25, 0.3, 0.35), Vector3.ONE, shell)
+
+
+## Rolls the shell: dd = distance moved forward, ds = sideways (+s = local +X).
+func roll(dd: float, ds: float) -> void:
+	if shell == null:
+		return
+	shell.rotate(Vector3.RIGHT, dd / BALL_R)
+	shell.rotate(Vector3.BACK, ds / BALL_R)
+	_lean = lerpf(_lean, clampf(ds * 6.0, -0.25, 0.25), 0.2)
+
+
 ## Called every frame. speed_factor ~ 1 normal, >1 boosted, 0 = stopped.
-func tick(delta: float, t: float, water_vel: float, speed_factor: float, alive: bool, pulling: bool) -> void:
-	if alive:
-		pivot.rotation.z = sin(t * 2.1) * 0.05
-		pivot.rotation.x = lerpf(pivot.rotation.x, clampf(-water_vel * 0.05, -0.18, 0.18) - 0.03 * (speed_factor - 1.0), 1.0 - exp(-8.0 * delta))
-		pivot.position.y = sin(t * 3.0) * 0.04
+func tick(delta: float, t: float, _water_vel: float, speed_factor: float, alive: bool, pulling: bool) -> void:
 	_pull = lerpf(_pull, 1.0 if (pulling and alive) else 0.0, 1.0 - exp(-12.0 * delta))
 	if arm_l:
 		var wave := sin(t * 14.0) * 0.12 * _pull
 		arm_l.rotation.z = lerpf(0.35, 2.75, _pull) + wave
 		arm_r.rotation.z = -lerpf(0.35, 2.75, _pull) - wave
 	if captain:
-		captain.rotation.z = sin(t * 2.6) * 0.06 * (1.0 - _pull)
-		captain.position.y = float(captain.get_meta("base_y")) + _pull * 0.04
+		captain.rotation.z = -_lean + sin(t * 2.6) * 0.04 * (1.0 - _pull)
+		captain.position.y = 0.08 + absf(sin(t * 7.0)) * 0.02 * speed_factor
 	if flag:
 		flag.rotation.y = sin(t * 9.0) * 0.35
-	for p in spin_parts:
-		p.rotation.y += delta * 2.0
+	if still:
+		still.rotation.y += delta * 0.8
 	var moving := alive and speed_factor > 0.05
-	for th in thrusters:
-		th.emitting = moving
-		th.speed_scale = clampf(speed_factor, 0.6, 1.8)
 	wake.emitting = moving
-	spray.emitting = moving and speed_factor > 1.2
-	if smoke:
-		smoke.emitting = alive
+	spray.emitting = false
 	if bubble.visible:
 		bubble.rotation.y += delta
 		var s := 1.0 + sin(t * 4.0) * 0.03
@@ -104,64 +178,6 @@ func tick(delta: float, t: float, water_vel: float, speed_factor: float, alive: 
 		fever_fx.scale = Vector3(fs, fs, fs)
 
 
-## Futuristic kit on every hull: twin plasma thrusters, a neon trim line and a
-## hover glow under the keel. `glow` is the GLOW colour picked in the workshop.
-func _tech_kit(glow: Color, round_hull: bool) -> void:
-	var neon := _m(glow, 2.6, 0.0)
-	var dark := _m(Color("1c1f3a"))
-	var zs := -1.05 if not round_hull else -1.15
-	for sx in [-0.32, 0.32]:
-		var pod := _cyl(0.13, 0.11, 0.42, dark, Vector3(sx, 0.32, zs), Vector3(PI * 0.5, 0.0, 0.0), 10)
-		pod.name = "pod"
-		_cyl(0.1, 0.1, 0.04, neon, Vector3(sx, 0.32, zs - 0.22), Vector3(PI * 0.5, 0.0, 0.0), 10)
-		var fire := CPUParticles3D.new()
-		fire.position = Vector3(sx, 0.32, zs - 0.26)
-		fire.amount = 16
-		fire.lifetime = 0.28
-		fire.local_coords = false
-		fire.direction = Vector3(0.0, 0.0, -1.0)
-		fire.spread = 6.0
-		fire.initial_velocity_min = 2.0
-		fire.initial_velocity_max = 3.0
-		fire.gravity = Vector3.ZERO
-		fire.scale_amount_curve = _curve(1.0, 0.1)
-		var sp := SphereMesh.new()
-		sp.radius = 0.08
-		sp.height = 0.16
-		sp.radial_segments = 6
-		sp.rings = 3
-		fire.mesh = sp
-		var fm := StandardMaterial3D.new()
-		fm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		fm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		fm.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-		fm.vertex_color_use_as_albedo = true
-		fire.material_override = fm
-		fire.color_ramp = _fade(Color(glow.lightened(0.5), 1.0), Color(glow, 0.0))
-		model.add_child(fire)
-		thrusters.append(fire)
-	# hover glow
-	var disc := CylinderMesh.new()
-	disc.top_radius = 0.75
-	disc.bottom_radius = 0.75
-	disc.height = 0.01
-	disc.radial_segments = 20
-	disc.rings = 1
-	var gm := StandardMaterial3D.new()
-	gm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	gm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	gm.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-	gm.albedo_color = Color(glow, 0.35)
-	var hg := MeshInstance3D.new()
-	hg.mesh = disc
-	hg.material_override = gm
-	hg.scale = Vector3(1.0, 1.0, 1.6)
-	hg.position = Vector3(0.0, 0.03, 0.0)
-	hg.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	model.add_child(hg)
-
-
-## Air stunts off a ramp: 0 = front flip, 1 = barrel roll, 2 = spin.
 func start_trick(kind: int) -> void:
 	trick_kind = kind
 
@@ -172,11 +188,11 @@ func trick_progress(u: float) -> void:
 	var e := smoothstep(0.08, 0.85, u) * TAU
 	if u >= 1.0:
 		e = 0.0
-	match trick_kind:
-		0: model.rotation = Vector3(-e, 0.0, 0.0)
-		1: model.rotation = Vector3(0.0, 0.0, e)
-		_: model.rotation = Vector3(0.0, e, 0.0)
-	model.position.y = sin(clampf(u, 0.0, 1.0) * PI) * 0.6 if trick_kind != 2 else 0.0
+	if captain:
+		match trick_kind:
+			0: captain.rotation.x = -e
+			1: captain.rotation.y = e
+			_: captain.rotation.x = e
 
 
 func reset_pose() -> void:
@@ -185,13 +201,18 @@ func reset_pose() -> void:
 	if model:
 		model.rotation = Vector3.ZERO
 		model.position = Vector3.ZERO
+		model.scale = Vector3.ONE
+	if captain:
+		captain.rotation = Vector3.ZERO
 	visible = true
 
 
 func crash() -> void:
-	var tw := create_tween().set_parallel(true)
-	tw.tween_property(pivot, "rotation", Vector3(-0.45, 0.3, 1.25), 0.55).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	tw.tween_property(pivot, "position", Vector3(0.0, -0.7, -0.6), 0.7)
+	if model == null:
+		return
+	var tw := create_tween()
+	tw.tween_property(model, "scale", Vector3(1.35, 0.6, 1.35), 0.08)
+	tw.tween_property(model, "scale", Vector3(0.05, 0.05, 0.05), 0.35).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
 
 
 func show_shield(on: bool) -> void:
@@ -217,7 +238,7 @@ func show_fever(on: bool) -> void:
 
 func _build_fever() -> void:
 	fever_fx = Node3D.new()
-	fever_fx.position = Vector3(0.0, 0.7, 1.35)
+	fever_fx.position = Vector3(0.0, 0.62, 0.75)
 	add_child(fever_fx)
 	var glow := StandardMaterial3D.new()
 	glow.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
@@ -256,7 +277,7 @@ func _build_fever() -> void:
 	fever_fire.lifetime = 0.3
 	fever_fire.local_coords = true
 	fever_fire.emitting = false
-	fever_fire.position = Vector3(0.0, 0.5, -1.1)
+	fever_fire.position = Vector3(0.0, 0.62, -0.6)
 	fever_fire.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
 	fever_fire.emission_sphere_radius = 0.45
 	fever_fire.direction = Vector3(0.0, 0.4, -1.0)
@@ -356,76 +377,6 @@ func _torus(inner: float, outer: float, mat: Material, pos: Vector3, rot := Vect
 	m.ring_segments = 8
 	return _add(m, mat, pos, rot, parent)
 
-
-func _hull(length: float, width: float, depth: float, bow_rise: float, hull_col: Color, deck_col: Color, stripe_col: Color) -> void:
-	var mesh := make_hull(length, width, depth, bow_rise)
-	mesh.surface_set_material(0, _m(hull_col, 0.0, 0.03))
-	mesh.surface_set_material(1, _m(deck_col, 0.0, 0.0))
-	var mi := MeshInstance3D.new()
-	mi.mesh = mesh
-	model.add_child(mi)
-	_box(Vector3(width * 0.98, 0.07, length * 0.6), _m(stripe_col, 0.0, 0.0), Vector3(0.0, 0.1, -length * 0.08))
-	# rail along the deck edge
-	_box(Vector3(width * 1.02, 0.06, length * 0.7), _m(Color("f4ead8"), 0.0, 0.015), Vector3(0.0, 0.3, -length * 0.1))
-
-
-## Lofted, chubby V-hull with a raised bow. Surface 0 = hull, surface 1 = deck.
-static func make_hull(length: float, width: float, depth: float, bow_rise: float) -> ArrayMesh:
-	var n := 12
-	var sections: Array = []
-	for i in n + 1:
-		var u := float(i) / n
-		var z := lerpf(-length * 0.45, length * 0.55, u)
-		var bowf := clampf((u - 0.5) / 0.5, 0.0, 1.0)
-		var sternf := clampf((0.12 - u) / 0.12, 0.0, 1.0)
-		var w := maxf(width * 0.5 * (1.0 - pow(bowf, 1.7)) * (1.0 - 0.12 * sternf), 0.015)
-		var top := 0.28 + bow_rise * bowf * bowf
-		var d := depth * (1.0 - 0.55 * bowf)
-		sections.append([
-			Vector3(-w, top, z), Vector3(-w * 1.04, 0.05, z), Vector3(-w * 0.8, -d * 0.55, z),
-			Vector3(0.0, -d, z), Vector3(w * 0.8, -d * 0.55, z), Vector3(w * 1.04, 0.05, z), Vector3(w, top, z),
-		])
-	var hull := SurfaceTool.new()
-	hull.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var deck := SurfaceTool.new()
-	deck.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var last := 6
-	for i in n:
-		var a: Array = sections[i]
-		var b: Array = sections[i + 1]
-		for k in last:
-			var c: Vector3 = (a[k] + a[k + 1] + b[k] + b[k + 1]) * 0.25
-			_quad(hull, a[k], a[k + 1], b[k + 1], b[k], Vector3(c.x, c.y - 0.05, 0.0))
-		_quad(deck, a[last], a[0], b[0], b[last], Vector3.UP)
-	var s: Array = sections[0]
-	var center := Vector3(0.0, 0.0, s[0].z)
-	for k in last + 1:
-		var p1: Vector3 = s[k]
-		var p2: Vector3 = s[(k + 1) % (last + 1)]
-		_tri(hull, center, p1, p2, Vector3.FORWARD)
-	var mesh := hull.commit()
-	deck.commit(mesh)
-	return mesh
-
-
-static func _tri(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, outward: Vector3) -> void:
-	var nrm := (b - a).cross(c - a)
-	if nrm.length() < 0.000001:
-		return
-	nrm = nrm.normalized()
-	if nrm.dot(outward) < 0.0:
-		nrm = -nrm
-	for v in [a, b, c]:
-		st.set_normal(nrm)
-		st.add_vertex(v)
-
-
-static func _quad(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, d: Vector3, outward: Vector3) -> void:
-	_tri(st, a, b, c, outward)
-	_tri(st, a, c, d, outward)
-
-
-# ------------------------------------------------------------------ captain
 
 func _captain(pos: Vector3, hat: String, shirt: Color, seated := false) -> void:
 	captain = Node3D.new()
@@ -530,122 +481,6 @@ func _flag_at(pos: Vector3) -> void:
 			_cyl(0.06, 0.06, 0.04, _m(b, 0.0, 0.0), Vector3(0.0, 0.0, -0.17), Vector3(0.0, 0.0, PI * 0.5), 12, flag)
 
 
-func _mast(z: float, height: float) -> void:
-	_cyl(0.05, 0.04, height, _m(Color("7a5236")), Vector3(0.0, 0.3 + height * 0.5, z))
-	_flag_at(Vector3(0.0, 0.3 + height - 0.08, z))
-
-
-# ------------------------------------------------------------------ hulls
-
-func _dinghy(paint: Color, sail: Color, hat: String) -> void:
-	_hull(2.4, 1.3, 0.4, 0.24, paint, Color("e9d3a8"), paint.darkened(0.3))
-	_box(Vector3(0.9, 0.12, 0.3), _m(Color("b07a4a")), Vector3(0.0, 0.34, -0.7))
-	_mast(0.45, 1.05)
-	_prism(Vector3(0.75, 0.9, 0.04), _m(sail, 0.0, 0.015), Vector3(0.0, 0.88, 0.07), Vector3(0.0, PI * 0.5, 0.0), 0.0)
-	_box(Vector3(0.03, 0.03, 0.8), _m(Color("7a5236")), Vector3(0.0, 0.43, 0.05))
-	_captain(Vector3(0.0, 0.3, -0.62), hat, sail)
-
-
-func _tug(paint: Color, sail: Color, hat: String) -> void:
-	_hull(2.3, 1.4, 0.45, 0.18, paint, Color("4b4f5c"), Color("1e1b2e"))
-	var glass := _m(Color("9fe3ff"), 0.5, 0.0)
-	_box(Vector3(0.85, 0.55, 0.7), _m(Color("f7f7f2")), Vector3(0.0, 0.58, -0.35))
-	_box(Vector3(0.98, 0.09, 0.84), _m(sail), Vector3(0.0, 0.9, -0.35))
-	for sx in [-1.0, 1.0]:
-		_cyl(0.08, 0.08, 0.02, glass, Vector3(sx * 0.43, 0.65, -0.35), Vector3(0.0, 0.0, PI * 0.5), 12)
-	_box(Vector3(0.6, 0.18, 0.02), glass, Vector3(0.0, 0.68, 0.01))
-	var chim := _cyl(0.13, 0.15, 0.45, _m(Color("2a2a33")), Vector3(0.0, 1.15, -0.62))
-	_cyl(0.155, 0.155, 0.1, _m(sail, 0.0, 0.0), Vector3(0.0, 0.12, 0.0), Vector3.ZERO, 12, chim)
-	for sx in [-1.0, 1.0]:
-		for zz in [-0.5, 0.25]:
-			_torus(0.07, 0.15, _m(Color("1e1b2e")), Vector3(sx * 0.7, 0.16, zz), Vector3(0.0, 0.0, PI * 0.5))
-	_cyl(0.025, 0.025, 0.5, _m(Color("7a5236")), Vector3(0.0, 0.55, -0.98))
-	_flag_at(Vector3(0.0, 0.72, -0.98))
-	_captain(Vector3(0.0, 0.3, 0.52), hat, sail)
-	smoke = CPUParticles3D.new()
-	smoke.position = Vector3(0.0, 1.4, -0.62)
-	smoke.amount = 14
-	smoke.lifetime = 1.6
-	smoke.local_coords = false
-	smoke.direction = Vector3(0.0, 1.0, -0.4)
-	smoke.spread = 15.0
-	smoke.initial_velocity_min = 0.6
-	smoke.initial_velocity_max = 1.0
-	smoke.gravity = Vector3(0.0, 0.3, 0.0)
-	smoke.scale_amount_curve = _curve(0.4, 1.8)
-	smoke.color_ramp = _fade(Color(0.9, 0.9, 0.95, 0.75), Color(0.9, 0.9, 0.95, 0.0))
-	var puff := SphereMesh.new()
-	puff.radius = 0.15
-	puff.height = 0.3
-	puff.radial_segments = 8
-	puff.rings = 4
-	smoke.mesh = puff
-	smoke.material_override = _fx_mat(Color.WHITE)
-	model.add_child(smoke)
-
-
-func _speedster(paint: Color, sail: Color, hat: String) -> void:
-	_hull(2.6, 1.1, 0.32, 0.12, paint, Color("2b2f5a"), Color("f7f7f2"))
-	_prism(Vector3(0.85, 0.32, 0.45), _m(Color("1b2a4a"), 0.0, 0.015), Vector3(0.0, 0.42, 0.3), Vector3(-PI * 0.5, 0.0, 0.0))
-	_box(Vector3(0.7, 0.14, 0.6), _m(Color("f7f7f2")), Vector3(0.0, 0.36, -0.5))
-	_box(Vector3(0.95, 0.05, 0.24), _m(sail), Vector3(0.0, 0.62, -1.02))
-	for sx in [-1.0, 1.0]:
-		_box(Vector3(0.05, 0.3, 0.22), _m(sail), Vector3(sx * 0.44, 0.48, -1.02))
-		_box(Vector3(0.05, 0.06, 1.7), _m(sail, 0.0, 0.0), Vector3(sx * 0.56, 0.2, -0.1))
-	_cyl(0.02, 0.02, 0.36, _m(Color("cccccc")), Vector3(0.0, 0.8, -1.02))
-	_flag_at(Vector3(0.0, 0.92, -1.02))
-	_captain(Vector3(0.0, 0.26, -0.18), hat, sail, true)
-
-
-func _junk(paint: Color, sail: Color, hat: String) -> void:
-	_hull(2.4, 1.32, 0.42, 0.4, paint, Color("e3c48f"), paint.darkened(0.35))
-	_mast(0.25, 1.1)
-	var batten := _m(Color("3a1a10"), 0.0, 0.0)
-	for k in 5:
-		var y := 0.52 + k * 0.17
-		var w := 0.72 - k * 0.07
-		_box(Vector3(0.04, 0.15, w), _m(sail, 0.0, 0.012), Vector3(0.0, y, 0.25 - w * 0.5 + 0.04))
-		_box(Vector3(0.05, 0.022, w + 0.04), batten, Vector3(0.0, y + 0.085, 0.25 - w * 0.5 + 0.04))
-	for sx in [-1.0, 1.0]:
-		_sphere(0.1, _m(Color("ff6a3a"), 2.5, 0.015), Vector3(sx * 0.48, 0.62, -0.95), Vector3(1.0, 1.3, 1.0))
-		_cyl(0.015, 0.015, 0.22, _m(Color("3a1a10")), Vector3(sx * 0.48, 0.47, -0.95))
-	_captain(Vector3(0.0, 0.3, -0.72), hat, sail)
-
-
-func _duck(paint: Color, sail: Color, hat: String) -> void:
-	var body := _m(paint)
-	_sphere(0.64, body, Vector3(0.0, 0.18, -0.1), Vector3(1.0, 0.72, 1.45))
-	_sphere(0.3, body, Vector3(0.0, 0.4, -0.95), Vector3(1.0, 0.8, 0.8))
-	_sphere(0.4, body, Vector3(0.0, 0.85, 0.62))
-	_prism(Vector3(0.38, 0.28, 0.15), _m(Color("ff8a1f")), Vector3(0.0, 0.79, 1.08), Vector3(PI * 0.5, 0.0, 0.0))
-	for sx in [-1.0, 1.0]:
-		_sphere(0.1, _m(Color("ffffff")), Vector3(sx * 0.19, 0.98, 0.93))
-		_sphere(0.055, _m(Color("15122b"), 0.0, 0.0), Vector3(sx * 0.2, 0.99, 1.01))
-		_sphere(0.24, _m(paint.darkened(0.12)), Vector3(sx * 0.5, 0.36, -0.15), Vector3(0.4, 0.7, 1.1))
-	_cyl(0.6, 0.6, 0.05, _m(sail, 0.0, 0.0), Vector3(0.0, 0.05, -0.1), Vector3.ZERO, 24)
-	_cyl(0.02, 0.02, 0.45, _m(Color("7a5236")), Vector3(0.0, 0.62, -1.05))
-	_flag_at(Vector3(0.0, 0.78, -1.05))
-	_captain(Vector3(0.0, 0.52, -0.32), hat, sail, true)
-
-
-func _skiff(paint: Color, sail: Color, hat: String) -> void:
-	_hull(2.5, 1.12, 0.36, 0.32, paint, Color("2d336b"), sail)
-	for sx in [-1.0, 1.0]:
-		_box(Vector3(0.04, 0.04, 2.0), _m(sail, 2.2, 0.0), Vector3(sx * 0.58, 0.31, 0.0))
-	_cyl(0.04, 0.03, 0.7, _m(Color("c0c8ff")), Vector3(0.0, 0.65, 0.3))
-	var halo := Node3D.new()
-	halo.position = Vector3(0.0, 1.08, 0.3)
-	model.add_child(halo)
-	_torus(0.28, 0.38, _m(sail, 2.4, 0.012), Vector3.ZERO, Vector3(0.0, 0.0, PI * 0.5), halo)
-	_sphere(0.15, _m(Color("fff3d6"), 2.5, 0.012), Vector3.ZERO, Vector3.ONE, halo)
-	spin_parts.append(halo)
-	_cyl(0.02, 0.02, 0.4, _m(Color("c0c8ff")), Vector3(0.0, 0.5, -1.05))
-	_flag_at(Vector3(0.0, 0.66, -1.05))
-	_captain(Vector3(0.0, 0.3, -0.55), hat, sail)
-
-
-# ------------------------------------------------------------------ effects
-
 func _fx_mat(col: Color, glow := false) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
 	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
@@ -688,9 +523,9 @@ func _set_trail(item: Dictionary) -> void:
 
 func _build_wake() -> void:
 	wake = CPUParticles3D.new()
-	wake.position = Vector3(0.0, 0.02, -1.0)
-	wake.amount = 46
-	wake.lifetime = 1.5
+	wake.position = Vector3(0.0, 0.04, -0.45)
+	wake.amount = 40
+	wake.lifetime = 0.9
 	wake.local_coords = false
 	wake.direction = Vector3(1.0, 0.0, 0.0)
 	wake.spread = 180.0
@@ -699,8 +534,8 @@ func _build_wake() -> void:
 	wake.initial_velocity_max = 0.9
 	wake.gravity = Vector3.ZERO
 	wake.emission_shape = CPUParticles3D.EMISSION_SHAPE_BOX
-	wake.emission_box_extents = Vector3(0.45, 0.0, 0.3)
-	wake.scale_amount_curve = _curve(0.5, 1.8)
+	wake.emission_box_extents = Vector3(0.25, 0.0, 0.1)
+	wake.scale_amount_curve = _curve(1.0, 0.2)
 	wake.color_ramp = _fade(Color(1, 1, 1, 0.8), Color(1, 1, 1, 0))
 	var disc := CylinderMesh.new()
 	disc.top_radius = 0.17
@@ -739,8 +574,8 @@ func _build_spray() -> void:
 func _build_bubble() -> void:
 	bubble = MeshInstance3D.new()
 	var s := SphereMesh.new()
-	s.radius = 1.45
-	s.height = 2.9
+	s.radius = 0.95
+	s.height = 1.9
 	s.radial_segments = 24
 	s.rings = 12
 	bubble.mesh = s
@@ -772,6 +607,7 @@ func _build_magnet() -> void:
 	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	m.albedo_color = Color("ff4fd8")
 	magnet_fx.material_override = m
-	magnet_fx.position = Vector3(0.0, 1.9, 0.0)
+	magnet_fx.position = Vector3(0.0, 1.5, 0.0)
+	magnet_fx.scale = Vector3(0.7, 0.7, 0.7)
 	magnet_fx.visible = false
 	add_child(magnet_fx)

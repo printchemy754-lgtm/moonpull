@@ -209,10 +209,13 @@ func _draw() -> void:
 		"ad":
 			draw_rect(Rect2(c + Vector2(-r * 0.8, -r * 0.55), Vector2(r * 1.6, r * 1.1)), color, false, w)
 			draw_colored_polygon(PackedVector2Array([c + Vector2(-r * 0.2, -r * 0.3), c + Vector2(r * 0.35, 0), c + Vector2(-r * 0.2, r * 0.3)]), color)
-		"boat":
-			draw_colored_polygon(PackedVector2Array([c + Vector2(-r * 0.9, r * 0.2), c + Vector2(r * 0.9, r * 0.2), c + Vector2(r * 0.55, r * 0.65), c + Vector2(-r * 0.6, r * 0.65)]), color)
-			draw_colored_polygon(PackedVector2Array([c + Vector2(-r * 0.05, -r * 0.85), c + Vector2(-r * 0.05, r * 0.1), c + Vector2(-r * 0.65, r * 0.1)]), color)
-			draw_colored_polygon(PackedVector2Array([c + Vector2(r * 0.05, -r * 0.6), c + Vector2(r * 0.05, r * 0.1), c + Vector2(r * 0.5, r * 0.1)]), color)
+		"boat", "ball":
+			# the moon-ball: a glowing shell with an equator band and a little captain
+			draw_circle(c, r * 0.82, Color(color, 0.35))
+			draw_arc(c, r * 0.82, 0.0, TAU, 32, color, w * 0.9, true)
+			draw_line(c + Vector2(-r * 0.8, r * 0.12), c + Vector2(r * 0.8, r * 0.12), color, w * 0.8, true)
+			draw_circle(c + Vector2(0.0, -r * 0.22), r * 0.2, color)
+			draw_circle(c + Vector2(-r * 0.32, -r * 0.42), r * 0.1, Color(1, 1, 1, 0.8))
 		"bolt":
 			draw_colored_polygon(PackedVector2Array([c + Vector2(r * 0.15, -r * 0.9), c + Vector2(-r * 0.5, r * 0.1), c + Vector2(-r * 0.05, r * 0.1), c + Vector2(-r * 0.2, r * 0.9), c + Vector2(r * 0.5, -r * 0.15), c + Vector2(r * 0.05, -r * 0.15)]), color)
 		"moon":

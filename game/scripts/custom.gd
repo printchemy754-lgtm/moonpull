@@ -5,7 +5,7 @@ extends RefCounted
 
 const CATS := ["hull", "paint", "sail", "flag", "hat", "trail", "wall"]
 const CAT_NAMES := {
-	"hull": "BOAT", "paint": "PAINT", "sail": "SAILS", "flag": "FLAG", "hat": "HAT", "trail": "WAKE", "wall": "WALLS",
+	"hull": "BALL", "paint": "PAINT", "sail": "GLOW", "flag": "FLAG", "hat": "HAT", "trail": "TRAIL", "wall": "CITY",
 }
 ## Equip slots -> the category whose items they use. Walls: one purchase, two slots.
 const SLOTS := {
@@ -109,12 +109,12 @@ static func _palette(prices: Array) -> Array:
 
 static func _build() -> void:
 	_items["hull"] = [
-		{"name": "SKIMMER", "price": 0},
-		{"name": "HAULER", "price": 2000},
-		{"name": "INTERCEPTOR", "price": 5000},
-		{"name": "SOLAR JUNK", "price": 10000},
-		{"name": "ROBO DUCK", "price": 18000},
-		{"name": "MOON SKIFF", "price": 30000},
+		{"name": "BUBBLE", "price": 0},
+		{"name": "TECH", "price": 2000},
+		{"name": "GYRO", "price": 5000},
+		{"name": "PLANET", "price": 10000},
+		{"name": "DUCKY", "price": 18000},
+		{"name": "MOON", "price": 30000},
 	]
 	var paints := _palette([0, 300, 300, 500, 800, 800, 1200, 1500, 2000, 2500])
 	paints.append({"name": "GOLDEN", "color": Color("ffcf40"), "price": -1, "unlock": "rank:20"})

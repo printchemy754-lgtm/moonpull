@@ -22,13 +22,19 @@ var data: Dictionary = {}
 var speed := 7.0
 var rise := 2.6
 var fall := 2.2
-var water_y := LevelGen.WATER_REST
+var water_y := 0.0
 var water_vel := 0.0
 var holding := false        # finger / mouse is down
-var boat_x := 0.0           # sideways position of the boat
+var boat_x := 0.0           # sideways position of the ball (s)
+var ball_y := 0.0           # height of the ball above the floor
+var ball_vy := 0.0
+var grounded := true
+var doomed := false         # fell below the floor: no landing any more
+var fall_t := 0.0
+var last_cp := 2.0          # distance of the last checkpoint passed
 var steer_target := 0.0     # where the finger wants the boat
 var boat_xvel := 0.0
-const STEER_SENS := 0.021   # metres of river per pixel dragged
+const STEER_SENS := 0.021   # metres of track per pixel dragged
 const KEY_STEER := 7.5      # metres per second with arrow keys / A-D
 var boat_z := 0.0
 var run_t := 0.0
@@ -219,7 +225,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		if holding and (state == State.PLAYING or state == State.COUNTDOWN):
 			# the camera looks down +Z, so screen-right is world -X
-			steer_target = clampf(steer_target - event.relative.x * STEER_SENS, -LevelGen.X_MAX, LevelGen.X_MAX)
+			steer_target = clampf(steer_target - event.relative.x * STEER_SENS, -LevelGen.S_MAX, LevelGen.S_MAX)
 		return
 	var is_press := false
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
@@ -256,7 +262,7 @@ func _run_perks() -> void:
 	if assist:
 		shield = true
 		boat.show_shield(true)
-		ui.special_banner("HELPER MODE", "Slower boat + a free shield. You got this!", Color("7dffb0"))
+		ui.special_banner("HELPER MODE", "Slower ball, safety rails and a shield. You got this!", Color("7dffb0"))
 		return
 	if randi() % 100 < Upgrades.shield_chance():
 		shield = true
@@ -279,7 +285,7 @@ func _process(delta: float) -> void:
 			holding = false
 		var kd := float(Input.is_key_pressed(KEY_LEFT) or Input.is_key_pressed(KEY_A)) - float(Input.is_key_pressed(KEY_RIGHT) or Input.is_key_pressed(KEY_D))
 		if kd != 0.0 and (state == State.PLAYING or state == State.COUNTDOWN):
-			steer_target = clampf(steer_target + kd * KEY_STEER * delta, -LevelGen.X_MAX, LevelGen.X_MAX)
+			steer_target = clampf(steer_target + kd * KEY_STEER * delta, -LevelGen.S_MAX, LevelGen.S_MAX)
 	if state != State.PAUSED:
 		run_t += delta
 
@@ -293,13 +299,17 @@ func _process(delta: float) -> void:
 				_refresh_menu_buttons()
 				if ui.chest_panel.visible:
 					_show_chests()
-			var idle := LevelGen.WATER_REST + sin(t * 1.3) * 0.15
-			water_y = lerpf(water_y, idle, 1.0 - exp(-3.0 * delta))
-			water_vel = 0.0
+			boat_x = sin(t * 0.6) * 0.4
+			ball_y = 0.0
 		State.PLAYING:
+			factor = _speed_factor() * _slope_factor()
+			var dd := speed * factor * delta
+			var px := boat_x
+			if not doomed:
+				boat_z += dd
 			_steer(delta)
-			factor = _speed_factor()
-			boat_z += speed * factor * delta
+			_physics(delta)
+			boat.roll(dd, boat_x - px)
 			_tick_effects(delta)
 			_tick_air(delta)
 			_check_items()
@@ -324,9 +334,11 @@ func _process(delta: float) -> void:
 				state = State.PLAYING
 		State.WON:
 			factor = 0.5
-			boat_z += speed * 0.45 * delta
-			water_vel = 0.0
-			water_y = lerpf(water_y, LevelGen.WATER_REST + 0.6, 1.0 - exp(-2.0 * delta))
+			var dw := speed * 0.35 * delta
+			boat_z = minf(boat_z + dw, world.track.length - 2.0)
+			boat_x = lerpf(boat_x, 0.0, 1.0 - exp(-2.0 * delta))
+			boat.roll(dw, 0.0)
+			ball_y = 0.0
 
 	var playing := state == State.PLAYING or state == State.COUNTDOWN
 	if playing != _cg_playing:
@@ -345,10 +357,11 @@ func _process(delta: float) -> void:
 			rise = LevelGen.rise_for(lv)
 			fall = LevelGen.fall_for(lv)
 		ui.set_score(_endless_score())
-	boat.position = Vector3(boat_x, water_y + air_h, boat_z)
-	boat.rotation = Vector3(0.0, clampf(boat_xvel * 0.035, -0.35, 0.35), clampf(-boat_xvel * 0.045, -0.4, 0.4))
-	boat.tick(delta, t, water_vel, factor, state != State.DEAD, holding and (state == State.PLAYING or state == State.COUNTDOWN))
-	world.update(delta, run_t, t, water_y, boat_z, holding and state == State.PLAYING)
+	var tr: Track = world.track
+	var fr := tr.frame(clampf(boat_z, 0.0, tr.length))
+	boat.transform = Transform3D(fr.basis, tr.point(clampf(boat_z, 0.0, tr.length), boat_x, ball_y))
+	boat.tick(delta, t, boat_xvel, factor, state != State.DEAD, holding and (state == State.PLAYING or state == State.COUNTDOWN))
+	world.update(delta, run_t, t, boat.global_position, clampf(boat_z, 0.0, tr.length), holding and state == State.PLAYING)
 	_update_camera(delta)
 
 
@@ -373,21 +386,71 @@ func _speed_factor() -> float:
 
 
 func _steer(delta: float) -> void:
+	if doomed:
+		return
+	var tr: Track = world.track
+	# curves push the ball outward: keep steering!
+	if grounded and state == State.PLAYING:
+		var v := speed * _speed_factor()
+		var push := -tr.curvature(boat_z) * v * v * LevelGen.DRIFT * (0.5 if assist else 1.0)
+		steer_target = clampf(steer_target + push * delta, -LevelGen.S_MAX, LevelGen.S_MAX)
 	var nx := lerpf(boat_x, steer_target, 1.0 - exp(-13.0 * delta))
+	# glowing rails keep you on the track (HELPER MODE: everywhere)
+	if (tr.rails_at(boat_z) or assist) and grounded:
+		var b := tr.bounds(boat_z)
+		nx = clampf(nx, b.x + LevelGen.R, b.y - LevelGen.R)
+		steer_target = clampf(steer_target, b.x + LevelGen.R - 0.3, b.y - LevelGen.R + 0.3)
 	boat_xvel = (nx - boat_x) / maxf(delta, 0.001)
 	boat_x = nx
 
 
-func _update_water(delta: float) -> void:
-	var target := rise if holding else -fall
-	water_vel = move_toward(water_vel, target, ACCEL * delta)
-	water_y += water_vel * delta
-	if water_y <= LevelGen.WATER_MIN:
-		water_y = LevelGen.WATER_MIN
-		water_vel = maxf(water_vel, 0.0)
-	elif water_y >= LevelGen.WATER_MAX:
-		water_y = LevelGen.WATER_MAX
-		water_vel = minf(water_vel, 0.0)
+## Downhill is faster, uphill a bit slower.
+func _slope_factor() -> float:
+	return clampf(1.0 - world.track.slope(boat_z) * 1.2, 0.8, 1.35)
+
+
+## Gravity, ramps, falling off the edge.
+func _physics(delta: float) -> void:
+	var tr: Track = world.track
+	if grounded:
+		ball_y = 0.0
+		if not tr.floor_ok(boat_z, boat_x, run_t) and not tr.rails_at(boat_z) and not (assist and tr.floor_ok(boat_z, 0.0, run_t)):
+			grounded = false
+			ball_vy = 0.0
+		return
+	ball_vy -= LevelGen.GRAVITY * delta
+	ball_y += ball_vy * delta
+	if ball_y <= 0.0:
+		if not doomed and ball_y > -0.35 and tr.floor_ok(boat_z, boat_x, run_t):
+			_land()
+		elif ball_y < -0.35:
+			doomed = true
+	if doomed:
+		fall_t += delta
+		if fall_t > 0.7 and state == State.PLAYING:
+			_crash(-1)
+
+
+func _land() -> void:
+	var air := ball_vy < -4.0
+	ball_y = 0.0
+	grounded = true
+	if air_t >= 0.0:
+		air_t = -1.0
+		boat.trick_progress(1.0)
+		world.burst_splash(boat.global_position + Vector3(0.0, 0.2, 0.0))
+		shake = 0.2
+		run_coins += AIR_BONUS
+		mission_coins += AIR_BONUS
+		ui.set_coins(Save.coins + run_coins - banked)
+		var tricks := ["FLIP!", "BARREL ROLL!", "SPIN!"]
+		ui.popup("%s  +%d" % [tricks[boat.trick_kind], AIR_BONUS], Color("7dfcff"))
+		Sfx.play("close", 1.1)
+		Sfx.vibrate(25)
+		_passed_obstacle(1)
+	elif air:
+		shake = 0.08
+	ball_vy = 0.0
 
 
 func _tick_effects(delta: float) -> void:
@@ -409,7 +472,12 @@ func _tick_effects(delta: float) -> void:
 
 
 func _update_camera(delta: float) -> void:
-	var bp := Vector3(boat_x, water_y, boat_z)
+	var tr: Track = world.track
+	var dz := clampf(boat_z, 0.0, tr.length)
+	var bp := tr.point(dz, boat_x, 0.0)
+	var fr := tr.frame(dz)
+	var fwd := fr.basis.z
+	var sd := fr.basis.x
 	var pos: Vector3
 	var look: Vector3
 	var fov := 74.0
@@ -417,29 +485,30 @@ func _update_camera(delta: float) -> void:
 	match cam_mode:
 		"menu":
 			var a := t * 0.15
-			pos = bp + Vector3(4.4 + sin(a) * 0.5, 2.4, 5.0 + cos(a) * 0.5)
-			look = bp + Vector3(0.0, 0.9, 0.4)
+			pos = bp + sd * (3.6 + sin(a) * 0.5) + Vector3.UP * 1.9 + fwd * (4.2 + cos(a) * 0.5)
+			look = bp + Vector3.UP * 0.8 + fwd * 0.4
 			fov = 62.0
 			rate = 3.0
 		"shop":
 			var a2 := t * 0.45
-			pos = bp + Vector3(sin(a2) * 3.6, 1.5, cos(a2) * 3.6)
-			look = bp + Vector3(0.0, -0.75, 0.0)
+			pos = bp + Vector3(sin(a2) * 3.0, 1.6, cos(a2) * 3.0)
+			look = bp + Vector3(0.0, -0.35, 0.0)
 			fov = 58.0
 			rate = 4.0
 		"shop_walls":
-			pos = bp + Vector3(0.0, 4.2, -6.5)
-			look = bp + Vector3(0.0, 1.8, 9.0)
+			pos = bp - fwd * 8.0 + Vector3.UP * 4.0
+			look = bp + fwd * 12.0 - Vector3.UP * 3.0
 			fov = 70.0
 			rate = 4.0
 		"win":
-			pos = bp + Vector3(5.2, 2.8, 2.5)
-			look = bp + Vector3(0.0, 1.0, 1.5)
+			pos = bp + sd * 4.6 + Vector3.UP * 2.6 + fwd * 3.0
+			look = bp + Vector3.UP * 0.9 + fwd * 1.5
 			fov = 64.0
 			rate = 2.5
 		_:
-			pos = Vector3(boat_x * 0.55, water_y * 0.6 + 4.9 + air_h * 0.5, boat_z - 8.0)
-			look = Vector3(boat_x * 0.75, water_y * 0.6 + 1.1 + air_h * 0.6, boat_z + 9.0)
+			var follow_y := ball_y * 0.55 if not doomed else 0.0
+			pos = tr.point(maxf(dz - 7.5, 0.0), boat_x * 0.5, 3.9 + follow_y)
+			look = tr.point(minf(dz + 8.0, tr.length), boat_x * 0.65, 0.4 + follow_y)
 			fov = 74.0 + (9.0 if boost_left > 0.0 else 0.0) - (4.0 if slow_left > 0.0 else 0.0) + (7.0 if fever_left > 0.0 else 0.0)
 	var k := 1.0 - exp(-rate * delta)
 	if not cam_ready:
@@ -478,8 +547,18 @@ func _check_items() -> void:
 					_close_call()
 				_passed_obstacle(2 if close else 1)
 			continue
+		if e.kind == "checkpoint":
+			if not e.taken:
+				e.taken = true
+				last_cp = float(e.z)
+				if mode == "levels" or mode == "endless":
+					ui.popup("CHECKPOINT", Color("39ff9f"))
+					Sfx.play("star", 1.2)
+			continue
+		if LevelGen.is_void(e.kind):
+			continue
 		if obstacle:
-			if e.get("smashed", false) or e.get("air", false) or air_t >= 0.0:
+			if e.get("smashed", false) or e.get("air", false) or ball_y > 1.6 or doomed:
 				continue
 			var clear := LevelGen.clearance(e, run_t, boat_x)
 			if clear + _grace() < 0.0:
@@ -498,7 +577,7 @@ func _check_items() -> void:
 		elif e.kind == "ramp":
 			if not e.taken:
 				_take_ramp(e)
-		elif not e.taken and absf(boat_x - float(e.x)) < LevelGen.PICK_RANGE * 1.3:
+		elif not e.taken and absf(boat_x - float(e.x)) < LevelGen.PICK_RANGE * 1.3 and ball_y < 2.0:
 			_take_pickup(e)
 
 
@@ -509,9 +588,9 @@ func _check_pearls() -> void:
 		var dz: float = p.z - boat_z
 		if dz < -2.0 or dz > 10.0:
 			continue
-		var hit := absf(dz) < 1.0 and absf(boat_x - float(p.x)) < LevelGen.PICK_RANGE
-		if air_t >= 0.0 and absf(dz) < 1.4:
-			hit = true   # in the air every coin on the arc is yours
+		var hit := absf(dz) < 1.0 and absf(boat_x - float(p.x)) < LevelGen.PICK_RANGE and absf(ball_y + LevelGen.PICK_OFFSET - float(p.y)) < 1.1
+		if air_t >= 0.0 and absf(dz) < 1.4 and absf(boat_x - float(p.x)) < 2.0:
+			hit = true   # in the air the coins on the arc are yours
 		var pulled := (magnet_left > 0.0 or fever_left > 0.0) and dz > -1.0 and dz < 9.0
 		if hit or pulled:
 			_collect(p)
@@ -615,10 +694,14 @@ func _fever_smash(e: Dictionary) -> void:
 	Sfx.vibrate(35)
 
 
-## Ramp: the boat launches into the air, spins, and flies over the wall.
+## Ramp: the ball launches into the air, the captain does a stunt.
 func _take_ramp(e: Dictionary) -> void:
 	e.taken = true
+	if not grounded:
+		return
 	air_t = 0.0
+	grounded = false
+	ball_vy = LevelGen.JUMP_V
 	world.trigger_current(e)
 	boat.start_trick(randi() % 3)
 	Sfx.play("boost", 1.2)
@@ -628,13 +711,10 @@ func _take_ramp(e: Dictionary) -> void:
 
 func _tick_air(delta: float) -> void:
 	if air_t < 0.0:
-		air_h = 0.0
 		return
-	air_t += delta * _speed_factor()
-	var u := air_t / LevelGen.JUMP_TIME
-	air_h = LevelGen.jump_height(u)
-	boat.trick_progress(u)
-	if u >= 1.0:
+	air_t += delta
+	boat.trick_progress(minf(air_t / LevelGen.JUMP_TIME, 0.99))
+	if false:
 		air_t = -1.0
 		air_h = 0.0
 		boat.trick_progress(1.0)
@@ -654,7 +734,7 @@ func _tick_air(delta: float) -> void:
 func _take_current(e: Dictionary) -> void:
 	e.taken = true
 	var up: bool = e.kind == "geyser"
-	steer_target = clampf(steer_target + (1.5 if up else -1.5), -LevelGen.X_MAX, LevelGen.X_MAX)
+	steer_target = clampf(steer_target + (1.5 if up else -1.5), -LevelGen.S_MAX, LevelGen.S_MAX)
 	world.trigger_current(e)
 	shake = 0.18
 	Sfx.play("boost" if up else "slow", 0.7 if up else 0.6)
@@ -682,9 +762,12 @@ func _close_call() -> void:
 	Sfx.vibrate(25)
 
 
+## i = index of the obstacle hit, or -1 for a fall off the track.
 func _crash(i: int) -> void:
 	state = State.DEAD
 	crash_index = i
+	if autotest:
+		print("AUTOTEST hit %s at z=%.1f x=%.2f bounds=%s grounded=%s air=%.2f" % [world.items[i].kind if i >= 0 else "fall", boat_z, boat_x, str(world.track.bounds(boat_z)), str(grounded), air_t])
 	combo = 0
 	if fever_left > 0.0:
 		_end_fever()
@@ -693,7 +776,8 @@ func _crash(i: int) -> void:
 	shake = 0.45
 	Sfx.play("crash")
 	Sfx.vibrate(140)
-	world.burst_splash(boat.global_position + Vector3(0.0, 0.4, 0.9))
+	if i >= 0:
+		world.burst_splash(boat.global_position + Vector3(0.0, 0.6, 0.4))
 	boat.crash()
 	ui.hide_hint()
 	if mode == "race_ai" or mode == "race_lan":
@@ -729,7 +813,7 @@ func _crash(i: int) -> void:
 		Save.save()
 		ui.set_coins(Save.coins)
 		Analytics.event("level_end", {"level_name": "level_%d" % level, "success": 0, "level": level,
-			"progress": int(clampf(boat_z / world.finish_z, 0.0, 1.0) * 100.0), "obstacle": String(world.items[crash_index].kind)})
+			"progress": int(clampf(boat_z / world.finish_z, 0.0, 1.0) * 100.0), "obstacle": String(world.items[crash_index].kind) if crash_index >= 0 else "fall"})
 		ui.show_lose(not continue_used, clampf(boat_z / world.finish_z, 0.0, 1.0), run_coins)
 		if pct > best and best > 0:
 			ui.lose_info.text = "NEW RECORD: %d%%!" % pct
@@ -803,20 +887,7 @@ func _revive(from_ad := true) -> void:
 		if mode == "levels":
 			lives = 1
 			ui.set_lives(lives, LIVES)
-	var e: Dictionary = world.items[crash_index]
-	e.passed = false
-	e.min_clear = LevelGen.EDGE
-	# put the boat in line with the door it missed
-	boat_x = LevelGen.safe_x(e, run_t + 2.0, boat_x)
-	steer_target = boat_x
-	boat_xvel = 0.0
-	var back_to: float = e.z - e.depth * 0.5 - LevelGen.BOAT_HALF_LEN - speed * 1.3
-	for j in range(crash_index - 1, -1, -1):
-		var prev: Dictionary = world.items[j]
-		if LevelGen.is_obstacle(prev.kind):
-			back_to = maxf(back_to, prev.z + prev.depth * 0.5 + LevelGen.BOAT_HALF_LEN + 0.4)
-			break
-	boat_z = back_to
+	_respawn_at(last_cp)
 	boat.reset_pose()
 	state = State.COUNTDOWN
 	countdown_left = 2.0
@@ -829,9 +900,28 @@ func _revive(from_ad := true) -> void:
 
 func _next_obstacle() -> Dictionary:
 	for e in world.items:
-		if not e.passed and LevelGen.is_obstacle(e.kind) and not e.get("smashed", false) and not e.get("air", false):
+		if not e.passed and (LevelGen.is_obstacle(e.kind) or LevelGen.is_void(e.kind)) and not e.get("smashed", false) and not e.get("air", false):
 			return e
 	return {}
+
+
+## Back to a checkpoint (after a crash or a fall): centre of the track.
+func _respawn_at(d: float) -> void:
+	boat_z = d
+	var b: Vector2 = world.track.bounds(d)
+	boat_x = (b.x + b.y) * 0.5
+	steer_target = boat_x
+	boat_xvel = 0.0
+	ball_y = 0.0
+	ball_vy = 0.0
+	grounded = true
+	doomed = false
+	fall_t = 0.0
+	air_t = -1.0
+	for e in world.items:
+		if float(e.z) + float(e.depth) * 0.5 > d and not e.get("taken", false):
+			e.passed = false
+			e.min_clear = LevelGen.EDGE
 
 
 func _intros() -> void:
@@ -857,9 +947,17 @@ func _tutorial() -> void:
 		ui.hide_hint()
 		return
 	var eta := maxf(0.0, (float(e.z) - boat_z) / maxf(speed * _speed_factor(), 0.1))
-	var go := LevelGen.pilot_x(e, run_t + eta, boat_x)
+	var go := LevelGen.pilot_target(world.items, boat_z, run_t, speed * _speed_factor(), boat_x)
+	if LevelGen.is_void(e.kind):
+		var r0: Vector2 = Vector2(-99, 99)
+		for r in LevelGen.free_ranges(e, run_t + eta):
+			if boat_x >= (r as Vector2).x and boat_x <= (r as Vector2).y:
+				r0 = r
+		if r0.x > -90.0:
+			ui.hide_hint()
+			return
 	var short := level > 2
-	if LevelGen.clearance(e, run_t + eta, boat_x) > 0.05:
+	if absf(go - boat_x) < 0.5:
 		ui.hide_hint()
 	elif go > boat_x:
 		ui.hint("SLIDE LEFT!" if short else "SLIDE YOUR FINGER LEFT", "left")
@@ -895,14 +993,20 @@ func _setup_run(new_data: Dictionary, theme_level: int) -> void:
 	pearls_got = 0
 	continue_used = false
 	crash_index = -1
-	boat_z = 0.0
+	boat_z = 2.0
 	run_t = 0.0
-	water_y = LevelGen.WATER_REST
+	water_y = 0.0
 	water_vel = 0.0
 	holding = false
 	boat_x = 0.0
 	steer_target = 0.0
 	boat_xvel = 0.0
+	ball_y = 0.0
+	ball_vy = 0.0
+	grounded = true
+	doomed = false
+	fall_t = 0.0
+	last_cp = 2.0
 	boost_left = 0.0
 	slow_left = 0.0
 	magnet_left = 0.0
@@ -1435,16 +1539,7 @@ func _update_race_hud() -> void:
 
 
 func _race_respawn() -> void:
-	boat_z = LevelGen.respawn_z(world.items, boat_z, speed)
-	for e in world.items:
-		if float(e.z) + float(e.depth) * 0.5 > boat_z - LevelGen.BOAT_HALF_LEN:
-			e.passed = false
-			e.min_clear = LevelGen.EDGE
-	for e2 in world.items:
-		if LevelGen.is_obstacle(e2.kind) and not e2.get("air", false) and float(e2.z) > boat_z:
-			boat_x = LevelGen.safe_x(e2, run_t + 1.5, boat_x)
-			break
-	steer_target = boat_x
+	_respawn_at(LevelGen.respawn_z(world.items, boat_z, speed))
 	boat.reset_pose()
 	state = State.COUNTDOWN
 	countdown_left = 0.8
@@ -1765,7 +1860,7 @@ func _autotest_tick(delta: float) -> void:
 			if ui.lose_panel.visible and at_wait <= 0.0:
 				at_crashes += 1
 				at_level_crashes += 1
-				print("AUTOTEST crash at level %d, z=%.1f (%s)" % [level, boat_z, world.items[crash_index].kind])
+				print("AUTOTEST crash at level %d, z=%.1f (%s)" % [level, boat_z, world.items[crash_index].kind if crash_index >= 0 else "fall"])
 				at_wait = 0.5
 				if not continue_used:
 					_on_continue()
@@ -1795,16 +1890,20 @@ func _autotest_tick(delta: float) -> void:
 
 
 func _autopilot_x() -> float:
+	if air_t >= 0.0 or not grounded:
+		return steer_target
 	for e in world.items:
-		if e.passed or e.get("smashed", false):
+		if e.passed or e.taken or e.kind in ["slow", "ramp", "checkpoint"] or LevelGen.is_obstacle(e.kind) or LevelGen.is_void(e.kind):
 			continue
-		if float(e.z) + float(e.depth) * 0.5 < boat_z - LevelGen.BOAT_HALF_LEN:
+		if float(e.z) < boat_z or float(e.z) - boat_z > 12.0:
 			continue
-		if LevelGen.is_obstacle(e.kind):
-			if fever_left > 0.5 or e.get("air", false) or air_t >= 0.0:
-				continue
-			var eta := maxf(0.0, (float(e.z) - boat_z) / maxf(speed * _speed_factor(), 0.1))
-			return LevelGen.pilot_x(e, run_t + eta, boat_x)
-		elif not e.taken and e.kind != "slow" and e.kind != "ramp":
+		# grab pickups only if nothing dangerous is in between
+		var safe := true
+		for o in world.items:
+			if (LevelGen.is_obstacle(o.kind) or LevelGen.is_void(o.kind)) and not o.passed and float(o.z) > boat_z - 1.0 and float(o.z) < float(e.z) + 1.0:
+				safe = false
+		if safe:
 			return float(e.x)
+		break
+	return LevelGen.pilot_target(world.items, boat_z, run_t, speed * _speed_factor() * _slope_factor(), boat_x)
 	return boat_x

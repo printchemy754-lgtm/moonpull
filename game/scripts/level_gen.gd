@@ -1,53 +1,63 @@
 class_name LevelGen
 extends RefCounted
-## Rules + procedural levels. The boat sails forward by itself; you steer it
-## left / right with your finger and slip through the gaps in the barriers.
-## Every level is deterministic (seeded by its number) and is checked by
-## simulated players (tools/sim.gd, tools/sim_kid.gd).
+## Moonpull — roll the moon-ball along a neon track floating in space.
+## The ball rolls forward by itself; you slide your finger to steer.
+## Fall off the edge (narrow bridges, holes, split lanes, gaps) or hit a
+## barrier and you respawn at the last checkpoint.
+## Levels are deterministic (seeded by their number) and are checked by
+## simulated players (tools/sim_kid.gd).
 
-const RIVER_W := 8.0
-const FLOOR_Y := -0.3
-const WATER_MIN := 0.4
-const WATER_MAX := 5.6
-const WATER_REST := 1.2        # the river level (fixed now)
-const DRAFT := 0.3
-const BOAT_TOP := 1.5
-const BOAT_HALF_LEN := 0.9
-const BOAT_HALF_W := 0.5       # half the boat's width
-const X_MAX := 3.4             # how far the boat can steer from the centre
-const HIT_GRACE := 0.12        # invisible forgiveness at block edges
-const WALL_H := 2.6            # barriers reach this high above the water
+const R := 0.5                 # ball radius
+const FLOOR_Y := -0.3          # (scenery helper)
+const RIVER_W := 7.0
+const HALF_W := 3.5            # normal floor half width
+const S_MAX := 6.0             # how far you can steer (beyond the edge = fall)
+const BOAT_HALF_LEN := 0.5     # (kept name) half the ball's length along the track
+const BOAT_HALF_W := 0.45      # half the ball's width for collisions
+const HIT_GRACE := 0.1
+const WALL_H := 2.4
+const GRAVITY := 22.0
+const JUMP_V := 8.0            # ramp launch speed (up)
+const DRIFT := 0.035           # how much curves push the ball outward
 const PICK_OFFSET := 0.6
-const PICK_RANGE := 0.95       # sideways tolerance for coins / power-ups
+const PICK_RANGE := 0.9
 const BOOST_MULT := 1.45
 const BOOST_TIME := 2.6
 const SLOW_MULT := 0.62
 const SLOW_TIME := 3.0
 const MAGNET_TIME := 6.0
 const STEER_V := 5.0           # sideways speed used to space obstacles fairly
-const JUMP_TIME := 1.5
-const JUMP_APEX := 3.6         # height of a ramp jump above the water
-const EDGE := 20.0             # "outside the river"
+const JUMP_TIME := 0.73        # = 2 * JUMP_V / GRAVITY (air time of a ramp jump)
+const EDGE := 30.0
 
 const OBSTACLES := ["wall", "gate2", "block", "mines", "slider", "sweeper"]
+const VOIDS := ["void", "pvoid"]
 const PICKUPS := ["boost", "slow", "shield", "magnet"]
 const CURRENTS: Array = []
 
+## The track currently being played (rivals and the autopilot read it).
+static var track: Track
+
 ## New things arrive regularly so the game keeps surprising you.
-const UNLOCKS := {2: "block", 3: "ramp", 4: "gate2", 5: "mines", 7: "slider", 10: "sweeper"}
+const UNLOCKS := {2: "holes", 3: "jump", 4: "narrow", 5: "block", 6: "zigzag", 7: "split", 8: "gate2", 9: "platform", 10: "mines", 12: "slider", 14: "sweeper"}
 
 ## Shown the first time a new thing appears.
 const INTROS := {
-	"block": ["CARGO BLOCK", "Steer around it - left or right!"],
-	"gate2": ["TWO DOORS", "Pick any open door!"],
-	"mines": ["PLASMA MINES", "Weave between the glowing orbs!"],
-	"boost": ["SPEED RING", "Faster boat, double coins!"],
+	"holes": ["HOLES", "Roll around the holes in the floor!"],
+	"jump": ["JUMP RAMP", "Fly over the gap - grab coins in the air!"],
+	"narrow": ["NARROW BRIDGE", "Stay in the middle!"],
+	"block": ["CARGO BLOCK", "Steer around it!"],
+	"zigzag": ["SNAKE BRIDGE", "Follow the curves!"],
+	"split": ["TWO LANES", "Pick a side!"],
+	"gate2": ["TWO DOORS", "Any open door works!"],
+	"platform": ["MOVING PLATFORM", "Roll on when it comes to you!"],
+	"mines": ["PLASMA MINES", "Weave between the orbs!"],
+	"slider": ["MOVING DOOR", "The door slides. Follow it!"],
+	"sweeper": ["SWEEPER", "A block slides across. Dodge it!"],
+	"boost": ["SPEED RING", "Faster ball, double coins!"],
 	"slow": ["MOON RING", "Slows time for a moment."],
 	"shield": ["SHIELD", "Survive one crash."],
 	"magnet": ["MAGNET", "Pulls in every coin nearby."],
-	"ramp": ["JUMP RAMP", "Fly over the wall and grab the coins in the air!"],
-	"slider": ["MOVING DOOR", "The door slides. Follow it!"],
-	"sweeper": ["SWEEPER", "A block slides across. Dodge it!"],
 }
 
 
@@ -60,12 +70,10 @@ static func special_for(level: int) -> String:
 	return "normal"
 
 
-## Gentle start (kids and first-time players), then a steady climb.
 static func speed_for(level: int) -> float:
-	return minf(6.2 + (level - 1) * 0.32, 13.0)
+	return minf(7.0 + (level - 1) * 0.28, 13.0)
 
 
-## Kept for compatibility (the old tide controls).
 static func rise_for(_level: int) -> float:
 	return 2.6
 
@@ -74,13 +82,16 @@ static func fall_for(_level: int) -> float:
 	return 2.2
 
 
-## Width of the doors in barriers: wide at first, tighter later.
 static func door_for(level: int) -> float:
-	return clampf(3.4 - (level - 1) * 0.09, 1.75, 3.4)
+	return clampf(3.4 - (level - 1) * 0.09, 1.8, 3.4)
 
 
 static func is_obstacle(kind: String) -> bool:
 	return kind in OBSTACLES
+
+
+static func is_void(kind: String) -> bool:
+	return kind in VOIDS
 
 
 static func is_current(kind: String) -> bool:
@@ -91,10 +102,10 @@ static func wave(e: Dictionary, t: float) -> float:
 	return sin(TAU * t / float(e.period) + float(e.phase))
 
 
-## Blocked x-intervals of an obstacle at time t (x = from, y = to).
+## Blocked s-intervals of an obstacle / void at time t.
 static func blocks_at(e: Dictionary, t: float) -> Array:
 	match String(e.kind):
-		"slider":
+		"slider", "pvoid":
 			var g := float(e.gx) + float(e.amp) * wave(e, t)
 			var hw := float(e.gw) * 0.5
 			return [Vector2(-EDGE, g - hw), Vector2(g + hw, EDGE)]
@@ -105,33 +116,40 @@ static func blocks_at(e: Dictionary, t: float) -> Array:
 	return e.blocks
 
 
-## Room between the boat at x and the nearest block (negative = touching).
 static func clearance(e: Dictionary, t: float, x: float) -> float:
 	var best := EDGE
+	var hw := BOAT_HALF_W if is_obstacle(e.kind) else 0.0
 	for b in blocks_at(e, t):
 		var v: Vector2 = b
-		best = minf(best, maxf(v.x - (x + BOAT_HALF_W), (x - BOAT_HALF_W) - v.y))
+		best = minf(best, maxf(v.x - (x + hw), (x - hw) - v.y))
 	return best
 
 
-## Open stretches of river (where the boat's centre may be) at time t.
 static func free_ranges(e: Dictionary, t: float) -> Array:
 	var bl: Array = blocks_at(e, t).duplicate()
 	bl.sort_custom(func(a: Vector2, b: Vector2): return a.x < b.x)
+	var hw := BOAT_HALF_W if is_obstacle(e.kind) else 0.15
+	var lim := _bounds_at(float(e.z))
 	var out := []
-	var cur := -X_MAX
+	var cur := lim.x
 	for b in bl:
 		var v: Vector2 = b
-		var hi := v.x - BOAT_HALF_W
+		var hi := v.x - hw
 		if hi > cur:
-			out.append(Vector2(cur, minf(hi, X_MAX)))
-		cur = maxf(cur, v.y + BOAT_HALF_W)
-	if cur < X_MAX:
-		out.append(Vector2(cur, X_MAX))
+			out.append(Vector2(cur, minf(hi, lim.y)))
+		cur = maxf(cur, v.y + hw)
+	if cur < lim.y:
+		out.append(Vector2(cur, lim.y))
 	return out.filter(func(r: Vector2): return r.y - r.x > 0.02)
 
 
-## Best x to steer to for obstacle e at time t, starting from x.
+static func _bounds_at(d: float) -> Vector2:
+	if track == null:
+		return Vector2(-HALF_W + 0.4, HALF_W - 0.4)
+	var b := track.bounds(d)
+	return Vector2(b.x + 0.35, b.y - 0.35)
+
+
 static func safe_x(e: Dictionary, t: float, x: float) -> float:
 	var best := x
 	var dist := INF
@@ -139,6 +157,8 @@ static func safe_x(e: Dictionary, t: float, x: float) -> float:
 		var v: Vector2 = r
 		var margin := minf(0.35, (v.y - v.x) * 0.5)
 		var tx := clampf(x, v.x + margin, v.y - margin)
+		if v.y - v.x < 3.4:
+			tx = (v.x + v.y) * 0.5   # narrow spots: aim for the middle
 		var d := absf(tx - x)
 		if d < dist:
 			dist = d
@@ -146,14 +166,13 @@ static func safe_x(e: Dictionary, t: float, x: float) -> float:
 	return best
 
 
-## Height of a ramp jump above the water, u = 0..1 through the flight.
-static func jump_height(u: float, _water := 0.0) -> float:
-	return JUMP_APEX * sin(PI * clampf(u, 0.0, 1.0))
+static func jump_height(u: float, _w := 0.0) -> float:
+	return JUMP_V * JUMP_TIME * 0.25 * 4.0 * u * (1.0 - u)
 
 
 # ------------------------------------------------------------------ generation
 
-const ENDLESS_SEGMENTS := 400
+const ENDLESS_SEGMENTS := 300
 
 
 static func endless_level(segment: int) -> int:
@@ -174,26 +193,35 @@ static func ramp_level(data: Dictionary, z: float) -> int:
 
 
 static func _patterns_for(level: int) -> Dictionary:
-	var p := {"wall": 3.0}
+	var p := {"run": 2.0, "wall": 3.0}
 	if level >= 2:
-		p["block"] = 2.0
-		p["zig"] = 1.0
+		p["holes"] = 1.6
+		p["zig"] = 0.8
 	if level >= 3:
-		p["ramp"] = 1.0
-		p["boost"] = 0.8
+		p["jump"] = 1.3
+		p["boost"] = 0.6
 	if level >= 4:
-		p["gate2"] = 1.6
+		p["narrow"] = 1.2
+		p["drop"] = 0.6
 	if level >= 5:
-		p["mines"] = 1.6
-		p["slow_wall"] = 0.5
+		p["block"] = 1.4
+		p["slow_wall"] = 0.4
 	if level >= 6:
-		p["shield"] = 0.5
-		p["magnet"] = 0.6
+		p["zigzag"] = 1.2
+		p["shield"] = 0.4
+		p["magnet"] = 0.5
 	if level >= 7:
-		p["slider"] = 1.5
+		p["split"] = 1.2
+	if level >= 8:
+		p["gate2"] = 1.2
+	if level >= 9:
+		p["platform"] = 1.0
 	if level >= 10:
-		p["sweeper"] = 1.5
-		p["zig"] = 1.6
+		p["mines"] = 1.3
+	if level >= 12:
+		p["slider"] = 1.2
+	if level >= 14:
+		p["sweeper"] = 1.2
 	return p
 
 
@@ -201,125 +229,345 @@ static func generate(level: int, seed_override := -1, endless := false) -> Dicti
 	var special := "normal" if endless else special_for(level)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = level * 7919 + 1234 if seed_override < 0 else seed_override
-	var speed := speed_for(level)
-	var reaction := maxf(1.2 - (level - 1) * 0.04, 0.5)
-	var door := door_for(level)
+	var g := {
+		"level": level, "speed": speed_for(level), "reaction": maxf(1.2 - (level - 1) * 0.04, 0.5),
+		"door": door_for(level), "rails": clampf(1.1 - (level - 1) * 0.1, 0.25, 1.0),
+		"turn": clampf(0.5 + level * 0.06, 0.5, 1.2),
+		"items": [] as Array[Dictionary], "pearls": [] as Array[Vector3], "before": [0.0] as Array[float],
+		"rng": rng, "boost_end": -1.0, "special": special,
+	}
+	var tr := Track.new()
+	tr.add(24.0, 0.0, 0.0, HALF_W, true)
 	var weights := _patterns_for(level)
 	var segments := mini(6 + level, 18) if not endless else ENDLESS_SEGMENTS
 	if special == "rush":
-		weights = {"wall": 2.0, "block": 2.0, "boost": 1.6, "magnet": 1.0, "ramp": 1.0}
+		weights = {"run": 2.0, "wall": 1.5, "jump": 1.5, "boost": 1.6, "magnet": 1.0}
 		segments = 12
 	elif special == "boss":
 		segments = mini(segments + (1 if level <= 4 else 3), 21)
 	var ramp: Array = []
-	var items: Array[Dictionary] = []
-	var pearls: Array[Vector3] = []
-	var z := 34.0
-	var before: Array[float] = [0.0]   # where the boat may be
-	var boost_end := -1.0
-	var land_extra := 0.0
 	var queue: Array[String] = []
 	if level == 1:
-		queue = ["wall_l", "wall_r", "wall_l"]
-	elif level == 3:
-		queue = ["wall", "ramp", "boost", "ramp"]
-	elif UNLOCKS.has(level):
+		queue = ["wall_l", "run", "wall_r", "wall_l"]
+	elif UNLOCKS.has(level) and not endless:
 		var fresh: String = UNLOCKS[level]
-		queue = ["wall", fresh, "wall", fresh]
-
+		queue = ["run", fresh, "wall", fresh]
+	var since_cp := 0
 	for s in segments:
 		if endless:
 			var lv := endless_level(s)
 			if ramp.is_empty() or int(ramp[-1][1]) != lv:
-				ramp.append([z, lv])
-				speed = speed_for(lv)
-				reaction = maxf(1.2 - (lv - 1) * 0.04, 0.5)
-				door = door_for(lv)
+				ramp.append([tr.length, lv])
+				g.speed = speed_for(lv)
+				g.reaction = maxf(1.2 - (lv - 1) * 0.04, 0.5)
+				g.door = door_for(lv)
+				g.rails = clampf(1.1 - (lv - 1) * 0.1, 0.25, 1.0)
+				g.turn = clampf(0.5 + lv * 0.06, 0.5, 1.2)
 				weights = _patterns_for(lv)
 		var pat: String = queue.pop_front() if not queue.is_empty() else _pick(weights, rng)
-		for spec in _make_pattern(pat, door, rng, before):
-			var eff := speed * BOOST_MULT if z < boost_end else speed
-			var flight := eff * JUMP_TIME
-			var move := 0.0
-			var tgt := _target_of(spec, before)
-			for x in before:
-				move = maxf(move, absf(_nearest_free(spec, x) - x) / STEER_V)
-			var tight: bool = spec.get("tight", false)
-			var extra := rng.randf_range(0.0, eff * (0.15 if tight else 0.4))
-			var gap := eff * (reaction + move * 1.2) + 4.0 + extra
-			if spec.kind == "ramp" or PICKUPS.has(String(spec.kind)):
-				gap = eff * 0.6 + 6.0 + extra * 0.3
-			if spec.get("air", false):
-				gap = flight * 0.5
-			elif land_extra > 0.0:
-				gap += land_extra
-				land_extra = 0.0
-			var doubled := z < boost_end or special == "rush"
-			if spec.get("air", false):
-				for k in 7:
-					var u := (k + 0.5) / 7.0
-					pearls.append(Vector3(before[0], WATER_REST + jump_height(u) + PICK_OFFSET, z + flight * u))
-				land_extra = flight * 0.5 + 2.0
-			else:
-				_pearl_trail(pearls, z, z + gap, before[0], tgt, rng, doubled)
-			z += gap
-			spec.z = z
-			items.append(spec)
-			if spec.kind == "boost":
-				boost_end = z + speed * BOOST_MULT * BOOST_TIME
-			if is_obstacle(spec.kind) and not spec.get("air", false):
-				before = _after(spec)
-			elif PICKUPS.has(String(spec.kind)):
-				before = [float(spec.x)]
-
-	var finish := z + speed * 3.0 + 10.0
-	if endless:
-		return {
-			"items": items, "pearls": pearls, "finish": finish, "endless": true, "ramp": ramp,
-			"speed": speed_for(2), "rise": 2.6, "fall": 2.2,
-		}
-	return {
-		"items": items, "pearls": pearls, "finish": finish, "special": special,
-		"speed": speed, "rise": 2.6, "fall": 2.2,
+		_pattern(pat, tr, g)
+		since_cp += 1
+		if since_cp >= 3:
+			since_cp = 0
+			_checkpoint(tr, g)
+	var finish := tr.length + 6.0
+	tr.add(40.0, 0.0, 0.0, HALF_W, true)
+	var out := {
+		"items": g.items, "pearls": g.pearls, "finish": finish, "track": tr,
+		"speed": speed_for(level) if not endless else speed_for(2), "rise": 2.6, "fall": 2.2,
 	}
-
-
-## Where a player can be right after passing spec.
-static func _after(spec: Dictionary) -> Array[float]:
-	var out: Array[float] = []
-	match String(spec.kind):
-		"slider":
-			out = [float(spec.gx) - float(spec.amp), float(spec.gx), float(spec.gx) + float(spec.amp)]
-		"sweeper":
-			out = [-X_MAX, 0.0, X_MAX]
-		_:
-			for r in free_ranges(spec, 0.0):
-				var v: Vector2 = r
-				out.append((v.x + v.y) * 0.5)
-	if out.is_empty():
-		out = [0.0]
+	if endless:
+		out["endless"] = true
+		out["ramp"] = ramp
+	else:
+		out["special"] = special
 	return out
 
 
-## Sideways spot that passes spec, closest to x (moving obstacles: worst case).
-static func _nearest_free(spec: Dictionary, x: float) -> float:
-	match String(spec.kind):
+static func _checkpoint(tr: Track, g: Dictionary) -> void:
+	tr.add(3.0, 0.0, 0.0, HALF_W, true)
+	var cp := _item("checkpoint")
+	cp.z = tr.length - 1.5
+	cp.depth = 1.0
+	g.items.append(cp)
+	g.before = [0.0] as Array[float]
+	tr.add(5.0, 0.0, 0.0, HALF_W, true)
+
+
+static func _rails(g: Dictionary) -> bool:
+	return (g.rng as RandomNumberGenerator).randf() < float(g.rails)
+
+
+## Approach run before something that needs steering: long enough to move there.
+static func _approach(tr: Track, g: Dictionary, target_s: Array, turn_ok := true) -> void:
+	var rng: RandomNumberGenerator = g.rng
+	var speed: float = g.speed * (BOOST_MULT if tr.length < float(g.boost_end) else 1.0)
+	var move := 0.0
+	for x in g.before:
+		var best := INF
+		for t in target_s:
+			best = minf(best, absf(float(t) - float(x)))
+		move = maxf(move, best / STEER_V)
+	var gap: float = speed * (float(g.reaction) + move * 1.2) + 3.0 + rng.randf_range(0.0, speed * 0.3)
+	var turn := 0.0
+	if turn_ok and rng.randf() < 0.4:
+		turn = rng.randf_range(-0.25, 0.25) * float(g.turn)
+	var d0 := tr.length
+	tr.add(gap, turn, 0.0, HALF_W, _rails(g))
+	_coin_line(g, d0 + 2.0, tr.length - 1.0, float(g.before[0]), float(target_s[0]))
+
+
+static func _coin_line(g: Dictionary, d0: float, d1: float, s0: float, s1: float, h := PICK_OFFSET) -> void:
+	var rng: RandomNumberGenerator = g.rng
+	var length := d1 - d0
+	var doubled: bool = g.special == "rush" or d0 < float(g.boost_end)
+	if length < 6.0 or (not doubled and rng.randf() > 0.85):
+		return
+	var spacing := 1.6 if doubled else 2.0
+	var count := clampi(int((length - 2.0) / spacing), 2, 10 if doubled else 7)
+	var start := d0 + (length - spacing * (count - 1)) * 0.5
+	for i in count:
+		var u := float(i) / maxf(count - 1, 1)
+		var s := lerpf(s0, s1, smoothstep(0.15, 0.85, u))
+		(g.pearls as Array[Vector3]).append(Vector3(s, h, start + spacing * i))
+
+
+static func _door_x(width: float, rng: RandomNumberGenerator, from := 0.0) -> float:
+	var lim := HALF_W - 0.25 - width * 0.5
+	var side_s := -signf(from) if absf(from) > 0.4 else (1.0 if rng.randf() < 0.5 else -1.0)
+	var min_off := minf(width * 0.5 - BOAT_HALF_W + 0.35, lim)
+	return side_s * rng.randf_range(min_off, lim)
+
+
+static func _place(tr: Track, g: Dictionary, e: Dictionary, after: Array) -> void:
+	tr.add(e.depth * 0.5, 0.0, 0.0, HALF_W, _rails(g))
+	e.z = tr.length
+	tr.add(e.depth * 0.5 + 1.0, 0.0, 0.0, HALF_W, _rails(g))
+	g.items.append(e)
+	var b: Array[float] = []
+	for a in after:
+		b.append(float(a))
+	g.before = b
+
+
+static func _pattern(pat: String, tr: Track, g: Dictionary) -> void:
+	var rng: RandomNumberGenerator = g.rng
+	var door: float = g.door
+	var lim := HALF_W - 0.25 - door * 0.5
+	match pat:
+		"run":
+			# a curvy stretch with coins: turns push the ball outward
+			var len := rng.randf_range(16.0, 26.0)
+			var turn := rng.randf_range(0.35, 1.0) * float(g.turn) * (1.0 if rng.randf() < 0.5 else -1.0)
+			var rise := rng.randf_range(-2.5, 1.5)
+			var d0 := tr.length
+			var s_in := float(g.before[0])
+			tr.add(len, turn, rise, HALF_W, _rails(g))
+			var inner := clampf(signf(turn) * 1.6, -2.0, 2.0)
+			_coin_line(g, d0 + 2.0, tr.length - 2.0, s_in, inner)
+			g.before = [inner] as Array[float]
+		"wall", "wall_l", "wall_r":
+			var dx := _door_x(door, rng, float(g.before[0]))
+			if pat == "wall_l":
+				dx = lim * 0.8
+			elif pat == "wall_r":
+				dx = -lim * 0.8
+			_approach(tr, g, [dx])
+			_place(tr, g, _wall([dx], door), [dx])
+			if pat == "wall" and rng.randf() < 0.3:
+				var dx2 := _door_x(door, rng, dx)
+				_approach(tr, g, [dx2], false)
+				_place(tr, g, _wall([dx2], door), [dx2])
+		"zig":
+			var sd := 1.0 if rng.randf() < 0.5 else -1.0
+			for k in 3:
+				var zx := sd * lim * 0.85
+				_approach(tr, g, [zx], false)
+				_place(tr, g, _wall([zx], door * 1.05), [zx])
+				sd = -sd
+		"gate2":
+			var d2 := door * 0.85
+			var l2 := HALF_W - 0.25 - d2 * 0.5
+			var a := -l2 * rng.randf_range(0.75, 1.0)
+			var b := l2 * rng.randf_range(0.75, 1.0)
+			_approach(tr, g, [a, b])
+			_place(tr, g, _wall([a, b], d2), [a, b])
+		"slow_wall":
+			var p2 := _item("slow")
+			p2.x = clampf(float(g.before[0]), -2.0, 2.0)
+			_pickup(tr, g, p2)
+			var dx3 := _door_x(door * 0.85, rng, float(g.before[0]))
+			_approach(tr, g, [dx3])
+			_place(tr, g, _wall([dx3], door * 0.85), [dx3])
+		"block":
+			var bw := rng.randf_range(2.4, 3.4)
+			var bc := clampf(float(g.before[0]) + rng.randf_range(-0.6, 0.6), -1.6, 1.6)
+			var e := _item("block")
+			e.blocks = [Vector2(bc - bw * 0.5, bc + bw * 0.5)]
+			e.depth = 1.6
+			var left := (bc + bw * 0.5 + HALF_W) * 0.5
+			var right := (bc - bw * 0.5 - HALF_W) * 0.5
+			_approach(tr, g, [left, right])
+			_place(tr, g, e, [left, right])
+		"mines":
+			var m := _item("mines")
+			var shift := clampf(float(g.before[0]), -0.5, 0.5) + rng.randf_range(-0.3, 0.3)
+			for k in [-1, 0, 1]:
+				var mx: float = k * 2.6 + shift
+				m.blocks.append(Vector2(mx - 0.42, mx + 0.42))
+			m.depth = 1.0
+			_approach(tr, g, [shift + 1.3, shift - 1.3])
+			_place(tr, g, m, [shift + 1.3, shift - 1.3])
 		"slider":
-			return float(spec.gx)
+			var sl := _item("slider")
+			sl.gw = door * 1.15
+			sl.amp = rng.randf_range(1.0, 1.6)
+			sl.gx = rng.randf_range(-0.4, 0.4)
+			sl.period = rng.randf_range(3.2, 4.2)
+			sl.phase = rng.randf_range(0.0, TAU)
+			_approach(tr, g, [sl.gx])
+			_place(tr, g, sl, [sl.gx - sl.amp, sl.gx, sl.gx + sl.amp])
 		"sweeper":
-			return -X_MAX if x < 0.0 else X_MAX
-	if not is_obstacle(spec.kind):
-		return float(spec.get("x", x))
-	return safe_x(spec, 0.0, x)
+			var sw := _item("sweeper")
+			sw.hw = 1.2
+			sw.amp = 2.2
+			sw.period = rng.randf_range(2.8, 3.8)
+			sw.phase = rng.randf_range(0.0, TAU)
+			sw.depth = 1.6
+			_approach(tr, g, [-2.8, 2.8])
+			_place(tr, g, sw, [-2.8, 0.0, 2.8])
+		"holes":
+			# 1-2 holes, the first one right where the ball is
+			var d0h := tr.length
+			_approach(tr, g, [float(g.before[0]) + 2.0])
+			var len := rng.randf_range(12.0, 16.0)
+			var hd := tr.length + 2.0
+			tr.add(len, 0.0, 0.0, HALF_W, false)
+			var hs := clampf(float(g.before[0]), -1.8, 1.8)
+			var hw := rng.randf_range(1.2, 1.5)
+			_void_hole(g, tr, hd, hd + 4.0, hs - hw, hs + hw)
+			var pass_s := hs + hw + 0.9 if hs < 0.0 else hs - hw - 0.9
+			_coin_line(g, d0h + 2.0, hd + 4.0, float(g.before[0]), pass_s)
+			if int(g.level) >= 6 and rng.randf() < 0.5:
+				var hs2 := clampf(pass_s, -1.8, 1.8)
+				tr.add(4.0, 0.0, 0.0, HALF_W, false)
+				_void_hole(g, tr, hd + 10.0, hd + 14.0, hs2 - hw, hs2 + hw)
+				pass_s = hs2 + hw + 0.9 if hs2 < 0.0 else hs2 - hw - 0.9
+			g.before = [pass_s] as Array[float]
+		"narrow":
+			var c := 0.0 if int(g.level) < 8 else rng.randf_range(-1.4, 1.4)
+			_approach(tr, g, [c])
+			var len2 := rng.randf_range(12.0, 18.0)
+			var hw2 := clampf(1.8 - int(g.level) * 0.025, 1.4, 1.8)
+			var dn := tr.length
+			tr.add(len2, 0.0, rng.randf_range(-1.0, 1.0), hw2, false, func(_u: float): return Vector2(c, hw2))
+			var v := _item("void")
+			v.z = dn + len2 * 0.5
+			v.depth = len2
+			v.blocks = [Vector2(-EDGE, c - hw2), Vector2(c + hw2, EDGE)]
+			g.items.append(v)
+			_coin_line(g, dn + 1.0, dn + len2 - 1.0, c, c)
+			tr.add(2.0, 0.0, 0.0, HALF_W, _rails(g))
+			g.before = [c] as Array[float]
+		"zigzag":
+			_approach(tr, g, [0.0])
+			var len3 := 28.0
+			var amp := clampf(0.9 + int(g.level) * 0.04, 1.1, 1.6)
+			var hw3 := clampf(1.9 - int(g.level) * 0.025, 1.5, 1.9)
+			var dz := tr.length
+			tr.add(len3, 0.0, 0.0, hw3, false, func(u: float): return Vector2(amp * sin(TAU * u), hw3))
+			var k := 0.0
+			while k < len3:
+				var cz := amp * sin(TAU * (k + 1.0) / len3)
+				var vz := _item("void")
+				vz.z = dz + k + 1.0
+				vz.depth = 2.0
+				vz.blocks = [Vector2(-EDGE, cz - hw3), Vector2(cz + hw3, EDGE)]
+				g.items.append(vz)
+				(g.pearls as Array[Vector3]).append(Vector3(cz, PICK_OFFSET, dz + k + 1.0))
+				k += 2.0
+			tr.add(2.0, 0.0, 0.0, HALF_W, _rails(g))
+			g.before = [0.0] as Array[float]
+		"split":
+			_approach(tr, g, [2.3, -2.3])
+			var len4 := rng.randf_range(12.0, 16.0)
+			var ds := tr.length
+			tr.add(len4, 0.0, 0.0, HALF_W, false)
+			_void_hole(g, tr, ds, ds + len4, -1.15, 1.15)
+			_coin_line(g, ds + 1.0, ds + len4 - 1.0, 2.3 if float(g.before[0]) >= 0.0 else -2.3, 2.3 if float(g.before[0]) >= 0.0 else -2.3)
+			g.before = [2.3, -2.3] as Array[float]
+		"jump":
+			_approach(tr, g, [0.0])
+			var rp := _item("ramp")
+			rp.depth = 2.0
+			tr.add(1.0, 0.0, 0.0, HALF_W, true)
+			rp.z = tr.length
+			g.items.append(rp)
+			var speed: float = g.speed
+			var flight := speed * JUMP_TIME
+			var gap_len := clampf(flight * 0.55, 2.5, 6.0)
+			tr.add(1.0, 0.0, 0.0, HALF_W, true)
+			var dg := tr.length
+			tr.add(gap_len, 0.0, 0.0, HALF_W, false)
+			var vg := _item("void")
+			vg.z = dg + gap_len * 0.5
+			vg.depth = gap_len
+			vg.blocks = [Vector2(-EDGE, EDGE)]
+			vg["air"] = true
+			g.items.append(vg)
+			tr.voids.append({"d0": dg, "d1": dg + gap_len, "kind": "gap"})
+			for c2 in 5:
+				var u := (c2 + 0.5) / 5.0
+				(g.pearls as Array[Vector3]).append(Vector3(float(g.before[0]) * 0.3, PICK_OFFSET + jump_height(u), rp.z + flight * u))
+			tr.add(maxf(flight - gap_len, 2.0) + 3.0, 0.0, 0.0, HALF_W, true)
+		"platform":
+			_approach(tr, g, [0.0])
+			var plen := 6.0
+			var dp := tr.length
+			tr.add(plen, 0.0, 0.0, HALF_W, false)
+			var pv := _item("pvoid")
+			pv.z = dp + plen * 0.5
+			pv.depth = plen
+			pv.gw = 2.8
+			pv.gx = 0.0
+			pv.amp = 2.0
+			pv.period = rng.randf_range(3.4, 4.2)
+			pv.phase = rng.randf_range(0.0, TAU)
+			g.items.append(pv)
+			tr.voids.append({"d0": dp, "d1": dp + plen, "kind": "platform", "pw": pv.gw, "amp": pv.amp, "period": pv.period, "phase": pv.phase})
+			tr.add(2.0, 0.0, 0.0, HALF_W, true)
+			g.before = [-2.0, 0.0, 2.0] as Array[float]
+		"drop":
+			var d0d := tr.length
+			tr.add(18.0, rng.randf_range(-0.3, 0.3), -6.0, HALF_W, true)
+			_coin_line(g, d0d + 2.0, tr.length - 1.0, float(g.before[0]), 0.0)
+			g.before = [0.0] as Array[float]
+		"boost", "shield", "magnet":
+			var p3 := _item(pat)
+			p3.x = clampf(float(g.before[0]) + rng.randf_range(-1.2, 1.2), -2.4, 2.4)
+			_pickup(tr, g, p3)
+			if pat == "boost":
+				g.boost_end = tr.length + float(g.speed) * BOOST_MULT * BOOST_TIME
 
 
-## Point the coin trail leads to.
-static func _target_of(spec: Dictionary, before: Array[float]) -> float:
-	if not is_obstacle(spec.kind):
-		return float(spec.get("x", before[0]))
-	if spec.kind == "slider":
-		return float(spec.gx)
-	return _nearest_free(spec, before[0])
+static func _pickup(tr: Track, g: Dictionary, e: Dictionary) -> void:
+	var speed: float = g.speed
+	var d0 := tr.length
+	tr.add(speed * 0.6 + 6.0, 0.0, 0.0, HALF_W, _rails(g))
+	e.z = tr.length - 2.0
+	e.depth = 1.0
+	_coin_line(g, d0 + 1.0, e.z - 1.0, float(g.before[0]), float(e.x))
+	g.items.append(e)
+	g.before = [float(e.x)] as Array[float]
+
+
+static func _void_hole(g: Dictionary, tr: Track, d0: float, d1: float, s0: float, s1: float) -> void:
+	tr.voids.append({"d0": d0, "d1": d1, "kind": "hole", "s0": s0, "s1": s1})
+	var v := _item("void")
+	v.z = (d0 + d1) * 0.5
+	v.depth = d1 - d0
+	v.blocks = [Vector2(s0, s1)]
+	g.items.append(v)
 
 
 static func _pick(weights: Dictionary, rng: RandomNumberGenerator) -> String:
@@ -337,12 +585,11 @@ static func _pick(weights: Dictionary, rng: RandomNumberGenerator) -> String:
 static func _item(kind: String) -> Dictionary:
 	return {
 		"kind": kind, "z": 0.0, "depth": 1.2, "blocks": [], "amp": 0.0, "period": 1.0, "phase": 0.0,
-		"x": 0.0, "y": WATER_REST + PICK_OFFSET, "gx": 0.0, "gw": 0.0, "hw": 0.0,
+		"x": 0.0, "y": PICK_OFFSET + 0.3, "gx": 0.0, "gw": 0.0, "hw": 0.0,
 		"passed": false, "min_clear": EDGE, "taken": false,
 	}
 
 
-## A barrier across the river with doors at the given centres.
 static func _wall(doors: Array, width: float) -> Dictionary:
 	var e := _item("wall" if doors.size() == 1 else "gate2")
 	var cur := -EDGE
@@ -358,142 +605,40 @@ static func _wall(doors: Array, width: float) -> Dictionary:
 	return e
 
 
-## Door centre on the opposite side from where the boat is, never in the
-## middle: you always have to steer (going straight never works).
-static func _door_x(width: float, rng: RandomNumberGenerator, from := 0.0) -> float:
-	var lim := X_MAX + BOAT_HALF_W - width * 0.5 - 0.1
-	var side := -signf(from) if absf(from) > 0.4 else (1.0 if rng.randf() < 0.5 else -1.0)
-	var min_off := minf(width * 0.5 - BOAT_HALF_W + 0.35, lim)
-	return side * rng.randf_range(min_off, lim)
-
-
-static func _make_pattern(pat: String, door: float, rng: RandomNumberGenerator, before: Array[float]) -> Array[Dictionary]:
-	var out: Array[Dictionary] = []
-	var lim := X_MAX + BOAT_HALF_W - door * 0.5 - 0.1
-	match pat:
-		"wall":
-			out.append(_wall([_door_x(door, rng, before[0])], door))
-			if rng.randf() < 0.35:
-				# a second barrier right after, back the other way
-				var w2 := _wall([_door_x(door, rng, float(out[-1].gx))], door)
-				w2["tight"] = true
-				out.append(w2)
-		"wall_l":
-			out.append(_wall([-lim * 0.7], door))
-		"wall_r":
-			out.append(_wall([lim * 0.7], door))
-		"zig":
-			var side := 1.0 if rng.randf() < 0.5 else -1.0
-			for k in 3:
-				var w := _wall([side * lim * 0.85], door * 1.05)
-				w["tight"] = k > 0
-				out.append(w)
-				side = -side
-		"gate2":
-			var d2 := door * 0.85
-			var l2 := X_MAX + BOAT_HALF_W - d2 * 0.5 - 0.1
-			out.append(_wall([-l2 * rng.randf_range(0.7, 1.0), l2 * rng.randf_range(0.7, 1.0)], d2))
-		"block":
-			var bw := rng.randf_range(2.6, 3.8)
-			var bc := rng.randf_range(-1.8, 1.8)
-			bc = clampf(before[0] + rng.randf_range(-0.8, 0.8), -1.8, 1.8)   # right in your way
-			var b := _item("block")
-			b.blocks = [Vector2(bc - bw * 0.5, bc + bw * 0.5)]
-			b.depth = 1.6
-			out.append(b)
-		"mines":
-			var m := _item("mines")
-			var shift := clampf(before[0], -0.5, 0.5) + rng.randf_range(-0.3, 0.3)   # one orb where you are
-			for k in [-1, 0, 1]:
-				var mx: float = k * 2.7 + shift
-				m.blocks.append(Vector2(mx - 0.45, mx + 0.45))
-			m.depth = 1.0
-			out.append(m)
-		"slider":
-			var sl := _item("slider")
-			sl.gw = door * 1.1
-			sl.amp = rng.randf_range(1.2, 1.9)
-			sl.gx = rng.randf_range(-0.6, 0.6)
-			sl.period = rng.randf_range(3.2, 4.2)
-			sl.phase = rng.randf_range(0.0, TAU)
-			out.append(sl)
-		"sweeper":
-			var sw := _item("sweeper")
-			sw.hw = 1.3
-			sw.amp = 2.4
-			sw.period = rng.randf_range(2.8, 3.8)
-			sw.phase = rng.randf_range(0.0, TAU)
-			sw.depth = 1.6
-			out.append(sw)
-		"ramp":
-			var rp := _item("ramp")
-			rp.depth = 2.0
-			out.append(rp)
-			var wall := _item("wall")
-			wall.blocks = [Vector2(-EDGE, EDGE)]
-			wall["air"] = true
-			out.append(wall)
-		"boost":
-			var p1 := _item("boost")
-			p1.x = rng.randf_range(-2.4, 2.4)
-			out.append(p1)
-		"slow_wall":
-			var p2 := _item("slow")
-			p2.x = rng.randf_range(-2.0, 2.0)
-			out.append(p2)
-			out.append(_wall([_door_x(door * 0.85, rng)], door * 0.85))
-		"shield", "magnet":
-			var p3 := _item(pat)
-			p3.x = rng.randf_range(-2.4, 2.4)
-			out.append(p3)
-	for e in out:
-		if PICKUPS.has(String(e.kind)):
-			e.depth = 1.0
-	return out
-
-
-static func _pearl_trail(pearls: Array[Vector3], z0: float, z1: float, a: float, b: float,
-		rng: RandomNumberGenerator, doubled: bool) -> void:
-	var length := z1 - z0
-	if length < 9.0 or (not doubled and rng.randf() > 0.85):
-		return
-	var spacing := 1.6 if doubled else 2.0
-	var count := clampi(int((length - 6.0) / spacing), 2, 9 if doubled else 7)
-	var start := z0 + (length - spacing * (count - 1)) * 0.5
-	for i in count:
-		var u := float(i) / maxf(count - 1, 1)
-		var x := lerpf(a, b, smoothstep(0.1, 0.8, u))
-		pearls.append(Vector3(clampf(x, -X_MAX, X_MAX), WATER_REST + PICK_OFFSET, start + spacing * i))
-
-
 # ------------------------------------------------------------------ AI pilot (rivals + autotest)
 
-## Sideways position an AI captain at (z, x) wants right now.
+## The thing at/after z the pilot has to deal with (obstacle or floor void).
+static func _steer_item(e: Dictionary) -> bool:
+	return (is_obstacle(e.kind) or is_void(e.kind)) and not e.get("smashed", false) and not e.get("air", false)
+
+
 static func pilot_target(items: Array, z: float, run_t: float, speed: float, x := 0.0) -> float:
 	for e in items:
-		if not is_obstacle(e.kind) or e.get("smashed", false) or e.get("air", false):
+		if not _steer_item(e):
 			continue
 		if float(e.z) + float(e.depth) * 0.5 < z - BOAT_HALF_LEN:
 			continue
+		if float(e.z) - z > speed * 2.5 + 6.0:
+			break
 		var eta := maxf(0.0, (float(e.z) - z) / maxf(speed, 0.1))
 		return pilot_x(e, run_t + eta, x)
-	return x
+	var b := _bounds_at(z + speed * 0.5)
+	return clampf(x, b.x + 0.6, b.y - 0.6)
 
 
-## Where to be to pass e around time at (moving ones: stay safe the whole pass).
 static func pilot_x(e: Dictionary, at: float, x: float) -> float:
 	var target := safe_x(e, at, x)
-	if e.kind == "sweeper" or e.kind == "slider":
+	if e.kind in ["sweeper", "slider", "pvoid"]:
 		var ok := true
 		for k in [-2, -1, 1, 2]:
 			if clearance(e, at + k * 0.12, target) < 0.05:
 				ok = false
 		if not ok:
-			# pick the spot that stays clear longest around the arrival
 			var best := target
 			var best_c := -INF
+			var b := _bounds_at(float(e.z))
 			for i in 15:
-				var cx := lerpf(-X_MAX, X_MAX, i / 14.0)
+				var cx := lerpf(b.x, b.y, i / 14.0)
 				var c := INF
 				for k in range(-3, 4):
 					c = minf(c, clearance(e, at + k * 0.1, cx))
@@ -505,9 +650,12 @@ static func pilot_x(e: Dictionary, at: float, x: float) -> float:
 	return target
 
 
+## Rivals: is the ball at (z, x) hitting something / off the floor?
 static func hits(items: Array, z: float, x: float, run_t: float) -> bool:
+	if track != null and not track.floor_ok(z, x, run_t) and not track.rails_at(z):
+		return true
 	for e in items:
-		if not is_obstacle(e.kind) or e.get("smashed", false) or e.get("air", false):
+		if not is_obstacle(e.kind) or e.get("smashed", false):
 			continue
 		var z0 := float(e.z) - float(e.depth) * 0.5
 		var z1 := float(e.z) + float(e.depth) * 0.5
@@ -520,13 +668,10 @@ static func hits(items: Array, z: float, x: float, run_t: float) -> bool:
 	return false
 
 
-## Last safe z before the obstacle at/after z (respawn point).
-static func respawn_z(items: Array, z: float, speed: float) -> float:
-	var back := z - speed * 1.2
+## Last checkpoint before z (respawn point).
+static func respawn_z(items: Array, z: float, _speed: float) -> float:
+	var back := 2.0
 	for e in items:
-		if not is_obstacle(e.kind):
-			continue
-		var z1 := float(e.z) + float(e.depth) * 0.5
-		if z1 + BOAT_HALF_LEN + 0.4 < z - BOAT_HALF_LEN:
-			back = maxf(back, z1 + BOAT_HALF_LEN + 0.4)
-	return maxf(back, 0.0)
+		if e.kind == "checkpoint" and float(e.z) < z - 1.0:
+			back = float(e.z)
+	return back

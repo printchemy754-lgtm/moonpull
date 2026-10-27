@@ -7,7 +7,7 @@ var display_name := "Rival"
 var is_remote := false
 var skill := 0.12          # AI decision interval in seconds (lower = better)
 var z := 0.0
-var water := LevelGen.WATER_REST
+var water := 0.0
 var vel := 0.0
 var holding := false
 var alive := true
@@ -22,7 +22,7 @@ var _decide := 0.0
 var _tag: Label3D
 var _ring: MeshInstance3D
 var _target_z := 0.0
-var _target_water := LevelGen.WATER_REST
+var _target_water := 0.0
 var air_t := -1.0
 
 
@@ -81,8 +81,9 @@ func simulate(delta: float, items: Array, run_t: float, speed: float, rise: floa
 	var nx := move_toward(x, _target_x, 7.0 * delta)
 	vel = (nx - x) / maxf(delta, 0.001)
 	x = nx
-	water = LevelGen.WATER_REST
-	z += speed * delta
+	var dz := speed * delta
+	z += dz
+	boat.roll(dz, vel * delta)
 	if air_t >= 0.0:
 		air_t += delta
 		boat.trick_progress(air_t / LevelGen.JUMP_TIME)
@@ -92,11 +93,11 @@ func simulate(delta: float, items: Array, run_t: float, speed: float, rise: floa
 		for e in items:
 			if float(e.z) > z + 2.0:
 				break
-			if e.kind == "ramp" and absf(float(e.z) - z) < 1.0 and not e.has("rival_%d" % get_instance_id()):
+			if e.kind == "ramp" and float(e.z) <= z and not e.has("rival_%d" % get_instance_id()):
 				e["rival_%d" % get_instance_id()] = true
 				air_t = 0.0
 				boat.start_trick(randi() % 3)
-	if LevelGen.hits(items, z, x, run_t):
+	if air_t < 0.0 and LevelGen.hits(items, z, x, run_t):
 		crash(items, speed)
 		return false
 	if z >= finish_z:
@@ -112,11 +113,8 @@ func crash(items: Array, speed: float) -> void:
 	respawn_left = 1.3
 	boat.crash()
 	z = LevelGen.respawn_z(items, z, speed)
-	for e in items:
-		if LevelGen.is_obstacle(e.kind) and not e.get("air", false) and float(e.z) > z:
-			x = LevelGen.safe_x(e, 0.0, x)
-			_target_x = x
-			break
+	x = 0.0
+	_target_x = 0.0
 
 
 ## Remote player: smoothly follow the last received state.
@@ -137,7 +135,9 @@ func update_visual(delta: float, t: float) -> void:
 		z = lerpf(z, _target_z, 1.0 - exp(-10.0 * delta))
 		x = lerpf(x, _target_water, 1.0 - exp(-10.0 * delta))
 	var lift := LevelGen.jump_height(air_t / LevelGen.JUMP_TIME) if air_t >= 0.0 else 0.0
-	position = Vector3(x, LevelGen.WATER_REST + lift, z)
-	rotation.z = clampf(-vel * 0.04, -0.35, 0.35)
+	var tr := LevelGen.track
+	if tr:
+		var dz := clampf(z, 0.0, tr.length)
+		transform = Transform3D(tr.frame(dz).basis, tr.point(dz, x, lift))
 	boat.tick(delta, t, 0.0, 1.0, alive, holding)
 	_ring.position.y = 0.02

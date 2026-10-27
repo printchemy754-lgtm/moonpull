@@ -725,7 +725,7 @@ func _build_menu() -> void:
 	var pulse := race_btn.create_tween().set_loops()
 	pulse.tween_property(race_btn, "scale", Vector2(1.07, 1.07), 0.6).set_trans(Tween.TRANS_SINE)
 	pulse.tween_property(race_btn, "scale", Vector2.ONE, 0.6).set_trans(Tween.TRANS_SINE)
-	var boats := _side_button("boat", "BOAT", ORANGE, 110.0)
+	var boats := _side_button("ball", "BALL", ORANGE, 110.0)
 	_place(boats, Control.PRESET_TOP_RIGHT, -132, top + 822, -22, top + 932)
 	boats.pressed.connect(func(): boats_pressed.emit())
 	menu.add_child(boats)
@@ -735,7 +735,7 @@ func _build_menu() -> void:
 	power_btn.pressed.connect(func(): upgrades_pressed.emit())
 	menu.add_child(power_btn)
 
-	menu_hint = _label("TAP TO SAIL\nSLIDE TO STEER", 36, Color.WHITE, 12)
+	menu_hint = _label("TAP TO ROLL\nSLIDE TO STEER", 36, Color.WHITE, 12)
 	_place(menu_hint, Control.PRESET_TOP_WIDE, 150, top + 704, -150, top + 800)
 	menu.add_child(menu_hint)
 	var tw := menu_hint.create_tween().set_loops()
@@ -784,7 +784,7 @@ func _build_profile() -> void:
 	var dice := _round_button("dice", BLUE, 96.0)
 	dice.pressed.connect(func(): name_edit.text = Save.random_name())
 	row.add_child(dice)
-	box.add_child(_label("Shown above your boat in races", 26, Color("cfe9ff"), 4))
+	box.add_child(_label("Shown above your ball in races", 26, Color("cfe9ff"), 4))
 	var ok := _button("SAVE", GREEN, "check", Vector2(480, 104))
 	ok.pressed.connect(func():
 		name_changed.emit(name_edit.text)
@@ -1628,7 +1628,7 @@ func show_menu(level: int, coins: int, world_name: String, world_no: int, step: 
 			tw.tween_property(node, "scale", Vector2(1.15, 1.15), 0.35)
 			tw.tween_property(node, "scale", Vector2.ONE, 0.35)
 	var sp := LevelGen.special_for(level)
-	menu_hint.text = "BOSS FIGHT!\nTAP TO SAIL" if sp == "boss" else ("COIN RUSH!\nTAP TO SAIL" if sp == "rush" else "TAP TO SAIL\nSLIDE TO STEER")
+	menu_hint.text = "BOSS FIGHT!\nTAP TO ROLL" if sp == "boss" else ("COIN RUSH!\nTAP TO ROLL" if sp == "rush" else "TAP TO ROLL\nSLIDE TO STEER")
 	menu_hint.label_settings.font_color = Color("ff6be0") if sp == "boss" else (GOLD if sp == "rush" else Color.WHITE)
 	logo.modulate.a = 0.0
 	logo.create_tween().tween_property(logo, "modulate:a", 1.0, 0.5)
