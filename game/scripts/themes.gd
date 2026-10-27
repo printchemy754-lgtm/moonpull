@@ -85,7 +85,7 @@ static func world_index(level: int) -> int:
 
 
 static func for_level(level: int) -> Dictionary:
-	return all()[world_index(level)]
+	return Season.decorate(all()[world_index(level)])
 
 
 ## 1-based position of the level inside its world (1..LEVELS_PER_WORLD).

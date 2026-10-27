@@ -70,6 +70,11 @@ func _build_chunk(z_end: float) -> void:
 				"temple": _temple(side, z, seg)
 				"neon": _neon(side, z, seg)
 				_: _canyon(side, z, seg)
+			# seasonal props (pumpkins / Christmas trees) on every wall style
+			if theme.has("season") and style != "canyon" and style != "pier" and rng.randf() < 0.4:
+				var tops := {"harbor": [3.55, 0.7], "village": [1.0, 0.25], "crystal": [7.6, 0.7], "candy": [6.65, 0.6], "temple": [7.75, 0.6], "neon": [1.2, 0.3]}
+				var tp: Array = tops.get(style, [1.0, 0.5])
+				_tree(Vector3(_x(side, float(tp[1])), float(tp[0]), z + seg * 0.5))
 			z += seg
 		_cursor[side] = z
 	_commit()
@@ -333,6 +338,25 @@ func _tree(base: Vector3) -> void:
 			_cyl(0.12, 0.18, 1.0 * sc, base + Vector3(0.0, 0.5 * sc, 0.0), _m(b, 0.0, 0.02), 8)
 			_cyl(0.9 * sc, 0.2 * sc, 0.35 * sc, base + Vector3(0.0, 1.2 * sc, 0.0), _m(Color("c8d2ff"), 0.0, 0.03), 16, Vector3(0.6, 0.0, 0.0))
 			_ball(0.08, base + Vector3(0.0, 1.5 * sc, 0.3 * sc), _m(a, 3.0, 0.0))
+		"pumpkin":
+			var ps := sc * 0.7
+			_ball(0.55 * ps, base + Vector3(0.0, 0.45 * ps, 0.0), _m(Color("ff7a1a"), 0.6, 0.03), Vector3(1.25, 0.85, 1.25))
+			_cyl(0.06, 0.08, 0.3 * ps, base + Vector3(0.0, 0.95 * ps, 0.0), _m(Color("3d8f3a"), 0.0, 0.02), 6)
+			for ex in [-0.2, 0.2]:
+				_box(Vector3(0.14, 0.12, 0.08) * ps, base + Vector3(ex * ps, 0.55 * ps, -0.62 * ps), _m(Color("fff1a0"), 4.0, 0.0))
+			_box(Vector3(0.4, 0.08, 0.08) * ps, base + Vector3(0.0, 0.32 * ps, -0.64 * ps), _m(Color("fff1a0"), 4.0, 0.0))
+		"xmas_tree":
+			var green := _m(Color("2e9e4f"), 0.0, 0.03)
+			_cyl(0.12 * sc, 0.1 * sc, 0.5 * sc, base + Vector3(0.0, 0.25 * sc, 0.0), _m(Color("6b4a2b"), 0.0, 0.02), 6)
+			for k in 3:
+				_cyl((1.0 - k * 0.25) * sc, 0.05, 1.1 * sc, base + Vector3(0.0, (0.9 + k * 0.6) * sc, 0.0), green, 8)
+			_ball(0.15 * sc, base + Vector3(0.0, 2.6 * sc, 0.0), _m(Color("ffd23f"), 3.0, 0.0))
+			var bulbs := [Color("ff3d3d"), Color("4ea8ff"), Color("ffd23f")]
+			for k in 6:
+				var ang := TAU * k / 6.0 + rng.randf()
+				var hy := rng.randf_range(0.7, 2.0)
+				var rr := (1.0 - (hy - 0.7) / 1.8) * 0.8
+				_ball(0.07 * sc, base + Vector3(cos(ang) * rr * sc, hy * sc, sin(ang) * rr * sc), _m(bulbs[k % 3], 3.0, 0.0))
 		"crystal":
 			for k in 3:
 				var hc := rng.randf_range(0.8, 2.0) * sc

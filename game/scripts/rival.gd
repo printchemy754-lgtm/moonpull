@@ -21,6 +21,7 @@ var _tag: Label3D
 var _ring: MeshInstance3D
 var _target_z := 0.0
 var _target_water := LevelGen.WATER_REST
+var air_t := -1.0
 
 
 func setup(rname: String, cfg: Dictionary, x: float, remote := false) -> void:
@@ -84,6 +85,19 @@ func simulate(delta: float, items: Array, run_t: float, speed: float, rise: floa
 		water = LevelGen.WATER_MAX
 		vel = minf(vel, 0.0)
 	z += speed * delta
+	if air_t >= 0.0:
+		air_t += delta
+		boat.trick_progress(air_t / LevelGen.JUMP_TIME)
+		if air_t >= LevelGen.JUMP_TIME:
+			air_t = -1.0
+	else:
+		for e in items:
+			if float(e.z) > z + 2.0:
+				break
+			if e.kind == "ramp" and absf(float(e.z) - z) < 1.0 and not e.has("rival_%d" % get_instance_id()):
+				e["rival_%d" % get_instance_id()] = true
+				air_t = 0.0
+				boat.start_trick(randi() % 3)
 	if LevelGen.hits(items, z, water, run_t):
 		crash(items, speed)
 		return false
@@ -120,6 +134,7 @@ func update_visual(delta: float, t: float) -> void:
 	if is_remote:
 		z = lerpf(z, _target_z, 1.0 - exp(-10.0 * delta))
 		water = lerpf(water, _target_water, 1.0 - exp(-10.0 * delta))
-	position = Vector3(lane_x, water, z)
+	var lift := LevelGen.jump_height(air_t / LevelGen.JUMP_TIME, water) if air_t >= 0.0 else 0.0
+	position = Vector3(lane_x, water + lift, z)
 	boat.tick(delta, t, vel, 1.0, alive, holding)
 	_ring.position.y = 0.02

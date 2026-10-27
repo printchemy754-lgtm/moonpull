@@ -14,6 +14,7 @@ var seen: Array = []   # element kinds already introduced
 var sound := true
 var music := true
 var vibe := true
+var season := "auto"   # Season.PREFS
 var daily_day := 0     # unix day of the last claimed gift
 var daily_streak := 0
 var free_ready_at := 0 # unix seconds when "free coins" can be watched again
@@ -106,6 +107,7 @@ func _read(cfg: ConfigFile) -> void:
 	sound = bool(cfg.get_value("s", "sound", true))
 	music = bool(cfg.get_value("s", "music", true))
 	vibe = bool(cfg.get_value("s", "vibe", true))
+	season = String(cfg.get_value("s", "season", "auto"))
 
 
 func _fix() -> void:
@@ -155,6 +157,7 @@ func save() -> void:
 	cfg.set_value("s", "sound", sound)
 	cfg.set_value("s", "music", music)
 	cfg.set_value("s", "vibe", vibe)
+	cfg.set_value("s", "season", season)
 	cfg.save(PATH)
 	CrazySDK.save_text(CLOUD_KEY, cfg.encode_to_text())
 

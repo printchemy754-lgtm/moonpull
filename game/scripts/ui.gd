@@ -40,6 +40,7 @@ signal race_leave
 signal race_double
 signal race_done
 signal upgrades_pressed
+signal season_pressed
 signal upgrade_buy(id: String)
 
 const INK := Color(0.07, 0.05, 0.16, 0.92)
@@ -95,6 +96,7 @@ var tasks_btn: Button
 var chest_btn: Button
 var race_btn: Button
 var power_btn: Button
+var season_btn: Button
 var upgrades_panel: Control
 var upgrades_box: VBoxContainer
 var fever_box: Control
@@ -1373,6 +1375,9 @@ func _build_settings() -> void:
 			toggle_changed.emit(key, on))
 		box.add_child(b)
 		toggles[key] = b
+	season_btn = _button("SEASON: AUTO", Color("ff7a1a"), "star", Vector2(460, 100), 34)
+	season_btn.pressed.connect(func(): season_pressed.emit())
+	box.add_child(season_btn)
 	privacy_btn = _button("PRIVACY", Color("6b6f86"), "shield", Vector2(460, 100))
 	privacy_btn.pressed.connect(func(): privacy_pressed.emit())
 	box.add_child(privacy_btn)
@@ -1751,7 +1756,12 @@ func show_settings(sound: bool, music: bool, vibe: bool, privacy_needed: bool) -
 		b.set_pressed_no_signal(pair[1])
 		_style_toggle(b, pair[0], pair[1])
 	privacy_btn.visible = privacy_needed
+	set_season_text()
 	_pop(settings_panel)
+
+
+func set_season_text() -> void:
+	_set_btn_text(season_btn, "SEASON: " + String(Season.NAMES.get(Save.season, "AUTO")))
 
 
 func show_daily(day: int, amount: int) -> void:

@@ -67,6 +67,10 @@ static func unlock_text(it: Dictionary) -> String:
 		return "RANK %s" % u.substr(5)
 	if u == "streak":
 		return "7-DAY STREAK"
+	if u == "season:halloween":
+		return "HALLOWEEN EVENT"
+	if u == "season:christmas":
+		return "CHRISTMAS EVENT"
 	return ""
 
 
@@ -114,6 +118,8 @@ static func _build() -> void:
 	]
 	var paints := _palette([0, 300, 300, 500, 800, 800, 1200, 1500, 2000, 2500])
 	paints.append({"name": "GOLDEN", "color": Color("ffcf40"), "price": -1, "unlock": "rank:20"})
+	paints.append({"name": "PUMPKIN", "color": Color("ff7a1a"), "price": -1, "unlock": "season:halloween"})
+	paints.append({"name": "CANDY CANE", "color": Color("e8202e"), "price": -1, "unlock": "season:christmas"})
 	_items["paint"] = paints
 	var sails := _palette([500, 500, 500, 500, 800, 800, 0, 1200, 1500, 2000])
 	var white: Dictionary = sails[6]
@@ -139,6 +145,8 @@ static func _build() -> void:
 		{"name": "TOP HAT", "kind": "top", "price": 4000},
 		{"name": "CROWN", "kind": "crown", "price": 9000},
 		{"name": "PIRATE", "kind": "pirate", "price": -1, "unlock": "rank:10"},
+		{"name": "WITCH HAT", "kind": "witch", "price": -1, "unlock": "season:halloween"},
+		{"name": "SANTA HAT", "kind": "santa", "price": -1, "unlock": "season:christmas"},
 	]
 	_items["trail"] = [
 		{"name": "FOAM", "a": Color(1, 1, 1), "b": Color(1, 1, 1), "price": 0},
@@ -148,6 +156,8 @@ static func _build() -> void:
 		{"name": "MOONLIGHT", "a": Color("b9a7ff"), "b": Color("6be3ff"), "price": 5000},
 		{"name": "RAINBOW", "a": Color("ff5a4e"), "b": Color("4ea8ff"), "price": 10000},
 		{"name": "FIRE", "a": Color("ff4d1f"), "b": Color("ffd23f"), "price": -1, "unlock": "streak"},
+		{"name": "GHOST", "a": Color("b14dff"), "b": Color("ff7a1a"), "price": -1, "unlock": "season:halloween"},
+		{"name": "SNOWFALL", "a": Color("ffffff"), "b": Color("8fe3ff"), "price": -1, "unlock": "season:christmas"},
 	]
 	_items["wall"] = [
 		{"name": "TECH WALL", "style": "canyon", "price": 0},

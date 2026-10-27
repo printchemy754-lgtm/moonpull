@@ -28,9 +28,11 @@ const MINE_HALF := 0.45       # half-thickness of a plasma-mine band
 const OBSTACLES := ["reef", "bridge", "gate", "drawbridge", "breather", "slider", "mine"]
 const PICKUPS := ["boost", "slow", "shield", "magnet"]
 const CURRENTS := ["geyser", "vortex"]
+const JUMP_TIME := 1.5        # seconds in the air after a ramp
+const JUMP_APEX := 4.9        # lowest absolute height of the jump's top
 
 ## New things arrive regularly so the game keeps surprising you.
-const UNLOCKS := {7: "slider", 10: "mine", 13: "geyser", 16: "vortex"}
+const UNLOCKS := {3: "ramp", 7: "slider", 10: "mine", 13: "geyser", 16: "vortex"}
 
 ## Shown the first time a new thing appears.
 const INTROS := {
@@ -41,6 +43,7 @@ const INTROS := {
 	"slow": ["MOON RING", "Slows time for a moment."],
 	"shield": ["SHIELD", "Survive one crash."],
 	"magnet": ["MAGNET", "Pulls in every pearl nearby."],
+	"ramp": ["JUMP RAMP", "Fly over the wall and grab the coins in the air!"],
 	"slider": ["MOVING GATE", "The gap slides up and down. Ride with it!"],
 	"mine": ["PLASMA MINES", "Go OVER or UNDER. Your choice!"],
 	"geyser": ["GEYSER", "It blasts the tide UP. Let go fast!"],
@@ -76,6 +79,11 @@ static func is_obstacle(kind: String) -> bool:
 
 static func is_current(kind: String) -> bool:
 	return kind in CURRENTS
+
+
+## Height of a jump above the water, u = 0..1 through the flight.
+static func jump_height(u: float, water: float) -> float:
+	return maxf(JUMP_APEX - water, 2.4) * sin(PI * clampf(u, 0.0, 1.0))
 
 
 static func wave(e: Dictionary, t: float) -> float:
@@ -176,6 +184,7 @@ static func generate(level: int, seed_override := -1, endless := false) -> Dicti
 	elif special == "boss":
 		segments = mini(segments + (1 if level <= 4 else 3), 21)
 	var ramp: Array = []
+	var land_extra := 0.0
 
 	var items: Array[Dictionary] = []
 	var pearls: Array[Vector3] = []
@@ -186,7 +195,7 @@ static func generate(level: int, seed_override := -1, endless := false) -> Dicti
 	if level == 1:
 		queue = ["reef", "bridge", "reef"]
 	elif level == 3:
-		queue = ["boost"]
+		queue = ["reef", "ramp_intro", "boost", "ramp"]
 	elif UNLOCKS.has(level):
 		# a brand-new obstacle: introduce it early, then show it again
 		var fresh: String = UNLOCKS[level]
@@ -214,10 +223,23 @@ static func generate(level: int, seed_override := -1, endless := false) -> Dicti
 			var tight: bool = spec.get("tight", false)
 			var extra := rng.randf_range(0.0, eff * (0.15 if tight else 0.45))
 			var gap := eff * (reaction + move * 1.3) + 3.2 + extra
-			if is_current(spec.kind):
+			if is_current(spec.kind) or spec.kind == "ramp":
 				gap = eff * 0.6 + 6.0 + extra * 0.3
+			var flight := eff * JUMP_TIME
+			if spec.get("air", false):
+				gap = flight * 0.5       # the wall sits under the top of the jump
+			elif land_extra > 0.0:
+				gap += land_extra        # room to land before the next thing
+				land_extra = 0.0
 			var doubled := z < boost_end or special == "rush"
-			_pearl_trail(pearls, z, z + gap, before[0], nat, rng, doubled)
+			if spec.get("air", false):
+				# coin arc along the flight
+				for k in 7:
+					var u := (k + 0.5) / 7.0
+					pearls.append(Vector3(0.0, before[0] + jump_height(u, before[0]) + PICK_OFFSET, z + flight * u))
+				land_extra = flight * 0.5 + 2.0
+			else:
+				_pearl_trail(pearls, z, z + gap, before[0], nat, rng, doubled)
 			z += gap
 			spec.z = z
 			items.append(spec)
@@ -225,7 +247,9 @@ static func generate(level: int, seed_override := -1, endless := false) -> Dicti
 				pearls.append(Vector3(0.0, spec.bonus_y, z))
 			if spec.kind == "boost":
 				boost_end = z + speed * BOOST_MULT * BOOST_TIME
-			if spec.kind == "mine":
+			if spec.get("air", false) or spec.kind == "ramp":
+				pass
+			elif spec.kind == "mine":
 				before = [(float(spec.m0) - BOAT_TOP + WATER_MIN) * 0.5, (float(spec.m1) + DRAFT + WATER_MAX) * 0.5]
 			elif is_obstacle(spec.kind):
 				before = [nat]
@@ -277,6 +301,8 @@ static func _patterns_for(level: int) -> Dictionary:
 	if level >= 6:
 		p["shield"] = 0.5
 		p["magnet"] = 0.6
+	if level >= 3:
+		p["ramp"] = 1.2
 	if level >= 7:
 		p["slider"] = 1.5
 	if level >= 10:
@@ -435,6 +461,13 @@ static func _make_pattern(pat: String, window: float, rng: RandomNumberGenerator
 		"vortex", "vortex_intro":
 			out.append(_current("vortex"))
 			out.append(_reef(rng.randf_range(1.4, 2.0) if pat == "vortex_intro" else rng.randf_range(1.8, 2.8)))
+		"ramp", "ramp_intro":
+			var rp := _item("ramp")
+			rp.depth = 2.0
+			out.append(rp)
+			var wall := _reef(rng.randf_range(3.0, 3.6))
+			wall["air"] = true
+			out.append(wall)
 		"shield":
 			out.append(_pickup("shield", rng.randf_range(1.8, 4.4)))
 		"magnet":
@@ -462,7 +495,7 @@ static func _pearl_trail(pearls: Array[Vector3], z0: float, z1: float, a: float,
 ## Water level an AI captain at `z` wants right now (ignores pickups).
 static func pilot_target(items: Array, z: float, run_t: float, speed: float, water := WATER_REST) -> float:
 	for e in items:
-		if not is_obstacle(e.kind) or e.get("smashed", false):
+		if not is_obstacle(e.kind) or e.get("smashed", false) or e.get("air", false):
 			continue
 		if float(e.z) + float(e.depth) * 0.5 < z - BOAT_HALF_LEN:
 			continue
@@ -500,7 +533,7 @@ static func pilot_level(e: Dictionary, at: float, water: float) -> float:
 ## Is something at (z, water) hitting an obstacle right now?
 static func hits(items: Array, z: float, water: float, run_t: float) -> bool:
 	for e in items:
-		if not is_obstacle(e.kind) or e.get("smashed", false):
+		if not is_obstacle(e.kind) or e.get("smashed", false) or e.get("air", false):
 			continue
 		var z0 := float(e.z) - float(e.depth) * 0.5
 		var z1 := float(e.z) + float(e.depth) * 0.5

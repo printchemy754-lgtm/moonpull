@@ -15,6 +15,7 @@ var arm_r: Node3D
 var flag: Node3D
 var spin_parts: Array[Node3D] = []
 var thrusters: Array[CPUParticles3D] = []
+var trick_kind := 0
 var wake: CPUParticles3D
 var spray: CPUParticles3D
 var smoke: CPUParticles3D
@@ -160,9 +161,30 @@ func _tech_kit(glow: Color, round_hull: bool) -> void:
 	model.add_child(hg)
 
 
+## Air stunts off a ramp: 0 = front flip, 1 = barrel roll, 2 = spin.
+func start_trick(kind: int) -> void:
+	trick_kind = kind
+
+
+func trick_progress(u: float) -> void:
+	if model == null:
+		return
+	var e := smoothstep(0.08, 0.85, u) * TAU
+	if u >= 1.0:
+		e = 0.0
+	match trick_kind:
+		0: model.rotation = Vector3(-e, 0.0, 0.0)
+		1: model.rotation = Vector3(0.0, 0.0, e)
+		_: model.rotation = Vector3(0.0, e, 0.0)
+	model.position.y = sin(clampf(u, 0.0, 1.0) * PI) * 0.6 if trick_kind != 2 else 0.0
+
+
 func reset_pose() -> void:
 	pivot.rotation = Vector3.ZERO
 	pivot.position = Vector3.ZERO
+	if model:
+		model.rotation = Vector3.ZERO
+		model.position = Vector3.ZERO
 	visible = true
 
 
@@ -472,6 +494,16 @@ func _hat(kind: String, y: float, accent: Color) -> void:
 			_cyl(0.2, 0.18, 0.16, black, Vector3(0.0, y + 0.04, 0.0), Vector3.ZERO, 14, p)
 			_cyl(0.205, 0.205, 0.04, _m(Color("e8433a"), 0.0, 0.0), Vector3(0.0, y - 0.0, 0.0), Vector3.ZERO, 14, p)
 			_sphere(0.05, _m(Color("f7f7f2"), 0.0, 0.0), Vector3(0.0, y + 0.06, 0.19), Vector3(1.0, 1.0, 0.5), p)
+		"witch":
+			var black := _m(Color("1e1b2e"))
+			_cyl(0.36, 0.36, 0.03, black, Vector3(0.0, y - 0.03, 0.0), Vector3.ZERO, 18, p)
+			_cyl(0.19, 0.02, 0.5, black, Vector3(0.0, y + 0.24, -0.04), Vector3(-0.25, 0.0, 0.0), 12, p)
+			_cyl(0.195, 0.18, 0.06, _m(Color("b14dff"), 0.6, 0.0), Vector3(0.0, y + 0.03, 0.0), Vector3.ZERO, 14, p)
+			_sphere(0.04, _m(Color("ff7a1a"), 1.2, 0.0), Vector3(0.0, y + 0.03, 0.19), Vector3.ONE, p)
+		"santa":
+			_cyl(0.2, 0.03, 0.42, _m(Color("e8202e")), Vector3(0.0, y + 0.18, -0.05), Vector3(-0.35, 0.0, 0.0), 12, p)
+			_cyl(0.215, 0.215, 0.08, _m(Color("f7f7f2")), Vector3(0.0, y - 0.01, 0.0), Vector3.ZERO, 14, p)
+			_sphere(0.07, _m(Color("f7f7f2")), Vector3(0.0, y + 0.33, -0.2), Vector3.ONE, p)
 		_:  # captain's cap
 			_cyl(0.205, 0.215, 0.11, _m(Color("f7f7f2")), Vector3(0.0, y + 0.0, 0.0), Vector3.ZERO, 14, p)
 			_cyl(0.23, 0.22, 0.04, _m(NAVY), Vector3(0.0, y - 0.05, 0.0), Vector3.ZERO, 14, p)

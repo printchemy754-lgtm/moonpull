@@ -35,6 +35,10 @@ var rng := RandomNumberGenerator.new()
 var _mats := {}
 var _coin_mesh: ArrayMesh
 var _coin_mat: StandardMaterial3D
+var _coin_gold: ArrayMesh
+var _coin_mat_cur: Material
+var _garlands: Array[Node3D] = []
+var _next_garland := 40.0
 var sparkle: CPUParticles3D
 var _fall_shader: Shader
 
@@ -47,7 +51,8 @@ func _ready() -> void:
 	confetti = _burst_particles(90, 2.2, Vector3(0.0, -5.0, 0.0), 5.0, 10.0, 0.09, true)
 	level_root = Node3D.new()
 	add_child(level_root)
-	_coin_mesh = _make_coin_mesh()
+	_coin_gold = _make_coin_mesh()
+	_coin_mesh = _coin_gold
 	_coin_mat = StandardMaterial3D.new()
 	_coin_mat.albedo_color = Color("ffc531")
 	_coin_mat.metallic = 0.85
@@ -86,6 +91,18 @@ func build_level(data: Dictionary, level: int, wall_left := "canyon", wall_right
 	_mats.clear()
 	theme = Themes.for_level(level)
 	_apply_theme()
+	_garlands.clear()
+	_next_garland = 40.0
+	match String(theme.get("season", "")):
+		"halloween":
+			_coin_mesh = _make_pumpkin_mesh()
+			_coin_mat_cur = null
+		"christmas":
+			_coin_mesh = _make_gift_mesh()
+			_coin_mat_cur = null
+		_:
+			_coin_mesh = _coin_gold
+			_coin_mat_cur = _coin_mat
 	rng.seed = level * 31 + 7
 	# Items and coins are only data here; their 3D nodes stream in as the boat
 	# approaches (see _stream), so even the endless river stays light on phones.
@@ -139,7 +156,7 @@ func _stream(boat_z: float) -> void:
 	while _next_pearl < pearls.size() and float(pearls[_next_pearl].z) < ahead:
 		var p: Dictionary = pearls[_next_pearl]
 		if not p.taken:
-			var mi := _mi(level_root, _coin_mesh, _coin_mat, Vector3(0.0, p.y, p.z))
+			var mi := _mi(level_root, _coin_mesh, _coin_mat_cur, Vector3(0.0, p.y, p.z))
 			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			p["node"] = mi
 		_next_pearl += 1
@@ -158,6 +175,12 @@ func _stream(boat_z: float) -> void:
 		if p2.has("node") and not p2.get("gone", false):
 			(p2.node as Node3D).queue_free()
 			p2["gone"] = true
+	if theme.has("season"):
+		while _next_garland < ahead and (endless or _next_garland < finish_z - 10.0):
+			_garlands.append(_spawn_garland(_next_garland))
+			_next_garland += 38.0
+		while not _garlands.is_empty() and _garlands[0].position.z < behind:
+			_garlands.pop_front().queue_free()
 	if walls:
 		walls.ensure(boat_z + SPAWN_AHEAD + 100.0)
 		walls.cull(boat_z - 80.0)
@@ -428,6 +451,8 @@ func _spawn_item(e: Dictionary) -> void:
 			_build_mine(root, e)
 		"geyser", "vortex":
 			_build_current(root, e)
+		"ramp":
+			_build_ramp(root, e)
 		"boost", "slow":
 			_build_ring(root, e)
 		"shield", "magnet":
@@ -642,6 +667,24 @@ func _build_current(root: Node3D, e: Dictionary) -> void:
 	e["jet"] = jet
 
 
+## Jump ramp floating on the tide: neon deck with chevrons.
+func _build_ramp(root: Node3D, e: Dictionary) -> void:
+	var pad := Node3D.new()
+	root.add_child(pad)
+	var neon := _mat("ramp_neon", theme.get("neon2", Color("00e5ff")), 0.2, 3.0, 0.0)
+	var deck := _mat("ramp_deck", theme.get("metal", Color("3a3f6a")), 0.5)
+	var slope := atan2(1.1, 3.0)
+	_box(pad, Vector3(3.4, 0.2, 3.2), Vector3(0.0, 0.45, 0.0), deck, Vector3(-slope, 0.0, 0.0))
+	for sx in [-1.75, 1.75]:
+		_box(pad, Vector3(0.12, 0.3, 3.2), Vector3(sx, 0.55, 0.0), neon, Vector3(-slope, 0.0, 0.0))
+	for k in 3:
+		var pr := PrismMesh.new()
+		pr.size = Vector3(1.2, 0.5, 0.06)
+		var ch := _mi(pad, pr, _mat("ramp_chev", theme.get("neon", Color("ff2fd0")), 0.2, 3.0, 0.0), Vector3(0.0, 0.25 + k * 0.33, -1.0 + k * 0.9), Vector3(-PI * 0.5 - slope, 0.0, 0.0))
+		ch.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	e["pad"] = pad
+
+
 ## The boat hit a geyser / vortex.
 func trigger_current(e: Dictionary) -> void:
 	if not e.has("pad") or e.get("gone", false):
@@ -689,6 +732,117 @@ func _build_orb(root: Node3D, e: Dictionary) -> void:
 		for s in [-1.0, 1.0]:
 			_box(spinner, Vector3(0.12, 0.4, 0.12), Vector3(s * 0.2, -0.05, 0.42), _mat("magtip", Color("e8e8f0"), 0.3, 0.8))
 	e["spinner"] = spinner
+
+
+## Halloween coin: a glowing mini pumpkin (2 surfaces: body + stem).
+func _make_pumpkin_mesh() -> ArrayMesh:
+	var mesh := ArrayMesh.new()
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for k in 5:
+		var lobe := SphereMesh.new()
+		lobe.radius = 0.24
+		lobe.height = 0.44
+		lobe.radial_segments = 10
+		lobe.rings = 6
+		var a := TAU * k / 5.0
+		st.append_from(lobe, 0, Transform3D(Basis.IDENTITY.scaled(Vector3(0.75, 1.0, 0.75)), Vector3(cos(a) * 0.14, 0.0, sin(a) * 0.14)))
+	st.commit(mesh)
+	var st2 := SurfaceTool.new()
+	st2.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var stem := CylinderMesh.new()
+	stem.top_radius = 0.03
+	stem.bottom_radius = 0.05
+	stem.height = 0.16
+	stem.radial_segments = 6
+	stem.rings = 1
+	st2.append_from(stem, 0, Transform3D(Basis.IDENTITY, Vector3(0.0, 0.26, 0.0)))
+	st2.commit(mesh)
+	var body := StandardMaterial3D.new()
+	body.albedo_color = Color("ff7a1a")
+	body.emission_enabled = true
+	body.emission = Color("ff6a00")
+	body.emission_energy_multiplier = 0.8
+	body.next_pass = Toon.outline_mat(0.025)
+	mesh.surface_set_material(0, body)
+	var green := StandardMaterial3D.new()
+	green.albedo_color = Color("3d8f3a")
+	mesh.surface_set_material(1, green)
+	return mesh
+
+
+## Christmas coin: a little present (box + golden ribbon).
+func _make_gift_mesh() -> ArrayMesh:
+	var mesh := ArrayMesh.new()
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var box := BoxMesh.new()
+	box.size = Vector3(0.42, 0.38, 0.42)
+	st.append_from(box, 0, Transform3D.IDENTITY)
+	st.commit(mesh)
+	var st2 := SurfaceTool.new()
+	st2.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for sz in [Vector3(0.45, 0.4, 0.09), Vector3(0.09, 0.4, 0.45)]:
+		var r := BoxMesh.new()
+		r.size = sz
+		st2.append_from(r, 0, Transform3D.IDENTITY)
+	var bow := TorusMesh.new()
+	bow.inner_radius = 0.05
+	bow.outer_radius = 0.11
+	bow.rings = 10
+	bow.ring_segments = 6
+	st2.append_from(bow, 0, Transform3D(Basis(Vector3.RIGHT, PI * 0.5), Vector3(0.0, 0.24, 0.0)))
+	st2.commit(mesh)
+	var red := StandardMaterial3D.new()
+	red.albedo_color = Color("e8202e")
+	red.emission_enabled = true
+	red.emission = Color("ff2030")
+	red.emission_energy_multiplier = 0.5
+	red.next_pass = Toon.outline_mat(0.025)
+	mesh.surface_set_material(0, red)
+	var gold := StandardMaterial3D.new()
+	gold.albedo_color = Color("ffd23f")
+	gold.emission_enabled = true
+	gold.emission = Color("ffb000")
+	gold.emission_energy_multiplier = 0.8
+	mesh.surface_set_material(1, gold)
+	return mesh
+
+
+## Festive string of lights hanging across the river.
+func _spawn_garland(z: float) -> Node3D:
+	var g := Node3D.new()
+	g.position = Vector3(0.0, 0.0, z)
+	level_root.add_child(g)
+	var halloween: bool = theme.season == "halloween"
+	var cable := _mat("garland_cable", Color("1e1b2e"), 0.5, 0.0, 0.0)
+	var n := 9
+	var prev := Vector3(-LevelGen.RIVER_W * 0.5 - 0.5, 8.6, 0.0)
+	for k in n:
+		var u := float(k) / (n - 1)
+		var x := lerpf(-LevelGen.RIVER_W * 0.5 - 0.5, LevelGen.RIVER_W * 0.5 + 0.5, u)
+		var y := 8.6 - sin(u * PI) * 1.3
+		var p := Vector3(x, y, 0.0)
+		if k > 0:
+			var mid := (prev + p) * 0.5
+			_box(g, Vector3(prev.distance_to(p), 0.04, 0.04), mid, cable, Vector3(0.0, 0.0, atan2(p.y - prev.y, p.x - prev.x)))
+		prev = p
+		if k == 0 or k == n - 1:
+			continue
+		if halloween:
+			if k % 2 == 0:
+				_ball(g, 0.32, p + Vector3(0.0, -0.45, 0.0), _mat("g_pumpkin", Color("ff7a1a"), 0.5, 1.6, 0.03), Vector3(1.2, 0.9, 1.2))
+				_box(g, Vector3(0.14, 0.08, 0.05), p + Vector3(0.0, -0.45, -0.38), _mat("g_face", Color("fff1a0"), 0.3, 4.0, 0.0))
+			else:
+				_box(g, Vector3(0.7, 0.05, 0.25), p + Vector3(0.0, -0.3, 0.0), _mat("g_bat", Color("2a1040"), 0.5, 0.0, 0.02), Vector3(0.0, 0.0, 0.25 if k % 4 == 1 else -0.25))
+		else:
+			var cols := [Color("ff3d3d"), Color("3dff7a"), Color("ffd23f"), Color("4ea8ff")]
+			_ball(g, 0.16, p + Vector3(0.0, -0.18, 0.0), _mat("g_bulb%d" % (k % 4), cols[k % 4], 0.3, 3.0, 0.0))
+			if k == 4:
+				var star := PrismMesh.new()
+				star.size = Vector3(0.6, 0.6, 0.1)
+				_mi(g, star, _mat("g_star", Color("ffd23f"), 0.3, 3.0, 0.02), p + Vector3(0.0, 0.4, 0.0))
+	return g
 
 
 ## One merged mesh per coin (1 draw call): disc + raised rim + embossed centre.
@@ -803,6 +957,21 @@ func _spawn_ambient() -> void:
 			ambient.initial_velocity_max = 0.3
 			ambient.spread = 180.0
 			ambient.material_override = _fx_mat("amb_mote", Color.WHITE, 3.0)
+		"bats":
+			g.set_color(0, Color(0.15, 0.05, 0.25, 0.0))
+			g.set_color(1, Color(0.15, 0.05, 0.25, 0.0))
+			g.add_point(0.5, Color(0.15, 0.05, 0.25, 1.0))
+			var bat := BoxMesh.new()
+			bat.size = Vector3(0.45, 0.04, 0.16)
+			ambient.mesh = bat
+			ambient.amount = 30
+			ambient.gravity = Vector3.ZERO
+			ambient.initial_velocity_min = 1.0
+			ambient.initial_velocity_max = 2.5
+			ambient.spread = 180.0
+			ambient.angular_velocity_min = -200.0
+			ambient.angular_velocity_max = 200.0
+			ambient.material_override = _fx_mat("amb_bat", Color.WHITE)
 		"stars":
 			g.set_color(0, Color(1.0, 1.0, 1.0, 0.0))
 			g.set_color(1, Color(1.0, 1.0, 1.0, 0.0))
@@ -872,6 +1041,8 @@ func update(delta: float, run_t: float, t: float, water_y: float, boat_z: float,
 							(orb as Node3D).rotation.z += delta * 2.5
 					var pulse := 1.0 + sin(t * 6.0 + z) * 0.06
 					ms.scale = Vector3(1.0, pulse, pulse)
+			"ramp":
+				(e.pad as Node3D).position.y = water_y
 			"geyser", "vortex":
 				var pd: Node3D = e.pad
 				pd.position.y = water_y

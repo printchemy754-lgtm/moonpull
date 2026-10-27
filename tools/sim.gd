@@ -59,7 +59,7 @@ func _run(data: Dictionary, interval: float) -> String:
 				e["taken"] = true
 				vel = LevelGen.CURRENT_V * (1.0 if e.kind == "geyser" else -1.0)
 		for e in items:
-			if not LevelGen.is_obstacle(e.kind):
+			if not LevelGen.is_obstacle(e.kind) or e.get("air", false):
 				continue
 			var z0 := float(e.z) - float(e.depth) * 0.5
 			var z1 := float(e.z) + float(e.depth) * 0.5

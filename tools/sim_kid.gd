@@ -49,7 +49,7 @@ func _run(data: Dictionary, interval: float, grace: float, sd: int) -> int:
 				e["taken"] = true
 				vel = LevelGen.CURRENT_V * (1.0 if e.kind == "geyser" else -1.0)
 		for e in items:
-			if not LevelGen.is_obstacle(e.kind) or e.get("done", false):
+			if not LevelGen.is_obstacle(e.kind) or e.get("done", false) or e.get("air", false):
 				continue
 			var z0 := float(e.z) - float(e.depth) * 0.5
 			var z1 := float(e.z) + float(e.depth) * 0.5
@@ -70,7 +70,7 @@ func _run(data: Dictionary, interval: float, grace: float, sd: int) -> int:
 ## Kids don't skim the edge: they aim for the middle of the open space.
 func _kid_target(items: Array, z: float, t: float, speed: float, water: float) -> float:
 	for e in items:
-		if not LevelGen.is_obstacle(e.kind) or e.get("done", false):
+		if not LevelGen.is_obstacle(e.kind) or e.get("done", false) or e.get("air", false):
 			continue
 		if float(e.z) + float(e.depth) * 0.5 < z - LevelGen.BOAT_HALF_LEN:
 			continue

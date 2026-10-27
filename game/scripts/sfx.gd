@@ -1,12 +1,18 @@
 extends Node
-## Procedural sound effects + a small generated music loop (no audio files).
+## Procedural sound effects + the synthwave soundtrack (music/*.ogg, made by
+## tools/make_music.py). Menu and run tracks crossfade; FEVER speeds the music up.
 
 const RATE := 22050
 const MUSIC_RATE := 11025
 
 var _streams := {}
 var _players: Array[AudioStreamPlayer] = []
-var _music: AudioStreamPlayer
+var _tracks := {}
+var _players_m := {}
+var _mode := ""
+var _req := ""
+var _fever := false
+const MUSIC_DB := -9.0
 
 
 func _ready() -> void:
@@ -26,10 +32,16 @@ func _ready() -> void:
 		var p := AudioStreamPlayer.new()
 		add_child(p)
 		_players.append(p)
-	_music = AudioStreamPlayer.new()
-	_music.volume_db = -13.0
-	add_child(_music)
-	call_deferred("_start_music")
+	for key in ["menu", "run", "halloween", "christmas"]:
+		var st: AudioStreamOggVorbis = load("res://music/%s.ogg" % key)
+		st.loop = true
+		_tracks[key] = st
+		var mp := AudioStreamPlayer.new()
+		mp.stream = st
+		mp.volume_db = -80.0
+		add_child(mp)
+		_players_m[key] = mp
+	call_deferred("music_mode", "menu")
 
 
 func play(sound_name: String, pitch := 1.0) -> void:
@@ -49,15 +61,57 @@ func vibrate(ms: int) -> void:
 
 
 func set_music(on: bool) -> void:
-	if on and _music.stream and not _music.playing:
-		_music.play()
-	elif not on:
-		_music.stop()
+	for key in _players_m:
+		var mp: AudioStreamPlayer = _players_m[key]
+		if not on:
+			mp.stop()
+	if on:
+		refresh_season()
 
 
-func _start_music() -> void:
-	_music.stream = _make_music()
-	set_music(Save.music)
+## Season changed in Settings: switch soundtrack.
+func refresh_season() -> void:
+	var m := _req
+	_req = ""
+	_mode = ""
+	music_mode(m if m != "" else "menu")
+
+
+## "menu" (chill) or "run" (driving). Crossfades between the two.
+## During Halloween / Christmas the seasonal track plays everywhere.
+func music_mode(req: String) -> void:
+	if req == _req and _mode != "":
+		return
+	_req = req
+	var mode := req
+	if Season.current() != "":
+		mode = Season.current()
+	if mode == _mode or not _players_m.has(mode):
+		return
+	_mode = mode
+	if not Save.music:
+		return
+	for key in _players_m:
+		var mp: AudioStreamPlayer = _players_m[key]
+		if key == mode:
+			if not mp.playing:
+				mp.volume_db = -40.0
+				mp.play()
+			mp.create_tween().tween_property(mp, "volume_db", MUSIC_DB, 0.6)
+		elif mp.playing:
+			var tw := mp.create_tween()
+			tw.tween_property(mp, "volume_db", -60.0, 0.8)
+			tw.tween_callback(mp.stop)
+
+
+## FEVER: the run track speeds up a little.
+func fever(on: bool) -> void:
+	if on == _fever:
+		return
+	_fever = on
+	for key in ["run", "halloween", "christmas"]:
+		var mp: AudioStreamPlayer = _players_m[key]
+		mp.create_tween().tween_property(mp, "pitch_scale", 1.08 if on else 1.0, 0.3)
 
 
 # ------------------------------------------------------------------ synthesis
@@ -115,32 +169,3 @@ func _noise(length: float, volume: float, smooth: float, thump_hz: float) -> Aud
 		var thump := sin(TAU * thump_hz * float(i) / RATE) * maxf(0.0, 1.0 - float(i) / (n * 0.3))
 		samples.append((last * 0.8 + thump * 0.6) * env * volume)
 	return _wav(samples)
-
-
-## 8-second loop: soft pad (Am - F - C - G) + a gentle plucked arpeggio.
-func _make_music() -> AudioStreamWAV:
-	var chords := [
-		[220.0, 261.6, 329.6], [174.6, 220.0, 261.6],
-		[261.6, 329.6, 392.0], [196.0, 246.9, 293.7],
-	]
-	var seconds := 8.0
-	var n := int(MUSIC_RATE * seconds)
-	var per_chord := n / 4
-	var samples := PackedFloat32Array()
-	samples.resize(n)
-	var step := int(MUSIC_RATE * 0.25)  # eighth notes at 120 bpm
-	for i in n:
-		var ci := mini(i / per_chord, 3)
-		var chord: Array = chords[ci]
-		var t := float(i) / MUSIC_RATE
-		var local := float(i % per_chord) / per_chord
-		var pad_env := minf(local * 6.0, 1.0) * minf((1.0 - local) * 6.0, 1.0)
-		var pad := 0.0
-		for f in chord:
-			pad += sin(TAU * float(f) * t) + 0.5 * sin(TAU * float(f) * 1.003 * t)
-		var k := (i / step) % 3
-		var note: float = float(chord[k]) * 2.0
-		var pt := float(i % step) / MUSIC_RATE
-		var pluck := sin(TAU * note * pt) * exp(-pt * 9.0)
-		samples[i] = pad * pad_env * 0.06 + pluck * 0.22
-	return _wav(samples, MUSIC_RATE, true)
