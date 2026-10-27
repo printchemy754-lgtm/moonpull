@@ -30,6 +30,9 @@ var pending_ranks: Array = []   # ranks reached but not yet shown
 var upgrades := {}              # Upgrades id -> level
 var bosses := 0                 # bosses defeated
 var fevers := 0                 # FEVERs triggered (all time)
+var keys: Array = []            # levels whose secret key was found
+var trophies := 0               # Trophy Road progress
+var trophy_claimed := 0         # how many road rewards were collected
 var fail_level := 0             # level the player keeps losing on
 var fail_count := 0             # game overs in a row on fail_level
 var best_progress := {}         # "level" -> best % reached
@@ -101,6 +104,9 @@ func _read(cfg: ConfigFile) -> void:
 	upgrades = cfg.get_value("p", "upgrades", {})
 	bosses = int(cfg.get_value("p", "bosses", 0))
 	fevers = int(cfg.get_value("p", "fevers", 0))
+	keys = cfg.get_value("p", "keys", [])
+	trophies = int(cfg.get_value("p", "trophies", 0))
+	trophy_claimed = int(cfg.get_value("p", "trophy_claimed", 0))
 	fail_level = int(cfg.get_value("p", "fail_level", 0))
 	fail_count = int(cfg.get_value("p", "fail_count", 0))
 	best_progress = cfg.get_value("p", "best_progress", {})
@@ -151,6 +157,9 @@ func save() -> void:
 	cfg.set_value("p", "upgrades", upgrades)
 	cfg.set_value("p", "bosses", bosses)
 	cfg.set_value("p", "fevers", fevers)
+	cfg.set_value("p", "keys", keys)
+	cfg.set_value("p", "trophies", trophies)
+	cfg.set_value("p", "trophy_claimed", trophy_claimed)
 	cfg.set_value("p", "fail_level", fail_level)
 	cfg.set_value("p", "fail_count", fail_count)
 	cfg.set_value("p", "best_progress", best_progress)

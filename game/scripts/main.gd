@@ -32,6 +32,25 @@ var grounded := true
 var doomed := false         # fell below the floor: no landing any more
 var fall_t := 0.0
 var last_cp := 2.0          # distance of the last checkpoint passed
+var crystals_run := 0
+var key_run := false
+var pins_run := 0
+var twin_ranges: Array = []  # [[z_in, z_out], ...] where the ball is split in two
+var twin_boat: Boat
+var in_twin := false
+var portal_zones: Array = [] # [[z, zone], ...]
+var zone := ""
+var course := "CLASSIC RUN"
+const COURSE_TEXT := {
+	"CLASSIC RUN": "Roll, steer, grab the coins!",
+	"HAMMER ALLEY": "Giant hammers swing across the track!",
+	"JUMP PARK": "Ramps, holes and speed pads. Fly!",
+	"SNAKE BRIDGES": "Narrow bridges and snakes. Stay on!",
+	"TWIN TROUBLE": "Your ball splits in two. Guide both!",
+	"PORTAL STORM": "Portals to other worlds + mystery boxes!",
+	"ROLLER COASTER": "Big drops and crazy speed!",
+	"MINE FIELD": "Mines, blocks and sweepers everywhere!",
+}
 var steer_target := 0.0     # where the finger wants the boat
 var boat_xvel := 0.0
 const STEER_SENS := 0.021   # metres of track per pixel dragged
@@ -123,6 +142,10 @@ func _ready() -> void:
 	boat = Boat.new()
 	add_child(boat)
 	boat.apply(Save.boat_cfg())
+	twin_boat = Boat.new()
+	add_child(twin_boat)
+	twin_boat.apply(Save.boat_cfg())
+	twin_boat.visible = false
 	camera = Camera3D.new()
 	camera.keep_aspect = Camera3D.KEEP_WIDTH
 	camera.fov = 60.0
@@ -254,6 +277,8 @@ func _start_run() -> void:
 		ui.special_banner("BOSS FIGHT", "Pass obstacles to blast the mothership!", Color("ff4fd8"))
 	elif special == "rush":
 		ui.special_banner("COIN RUSH", "Bonus level: grab every coin!", Color("ffd166"))
+	elif mode == "levels" and level > 2:
+		ui.special_banner(course, String(COURSE_TEXT.get(course, "")), Color("7dfcff"))
 	Analytics.event("level_start", {"level_name": "level_%d" % level, "level": level})
 
 
@@ -312,6 +337,7 @@ func _process(delta: float) -> void:
 			boat.roll(dd, boat_x - px)
 			_tick_effects(delta)
 			_tick_air(delta)
+			_update_twin_zone()
 			_check_items()
 			_check_pearls()
 			_intros()
@@ -361,6 +387,11 @@ func _process(delta: float) -> void:
 	var fr := tr.frame(clampf(boat_z, 0.0, tr.length))
 	boat.transform = Transform3D(fr.basis, tr.point(clampf(boat_z, 0.0, tr.length), boat_x, ball_y))
 	boat.tick(delta, t, boat_xvel, factor, state != State.DEAD, holding and (state == State.PLAYING or state == State.COUNTDOWN))
+	if twin_boat.visible:
+		var dzt := clampf(boat_z, 0.0, tr.length)
+		twin_boat.transform = Transform3D(fr.basis, tr.point(dzt, -boat_x, ball_y))
+		twin_boat.roll(speed * factor * delta, -boat_xvel * delta)
+		twin_boat.tick(delta, t, -boat_xvel, factor, state != State.DEAD, false)
 	world.update(delta, run_t, t, boat.global_position, clampf(boat_z, 0.0, tr.length), holding and state == State.PLAYING)
 	_update_camera(delta)
 
@@ -402,6 +433,51 @@ func _steer(delta: float) -> void:
 		steer_target = clampf(steer_target, b.x + LevelGen.R - 0.3, b.y - LevelGen.R + 0.3)
 	boat_xvel = (nx - boat_x) / maxf(delta, 0.001)
 	boat_x = nx
+
+
+## Twin sections (two mirrored balls) and portal worlds follow the distance,
+## so respawning behind them restores the right state.
+func _update_twin_zone() -> void:
+	var tw := false
+	for r in twin_ranges:
+		if boat_z >= float(r[0]) and boat_z < float(r[1]):
+			tw = true
+	if tw != in_twin:
+		in_twin = tw
+		twin_boat.visible = tw
+		if tw:
+			# split: keep both balls on their lanes
+			var sg := 1.0 if boat_x >= 0.0 else -1.0
+			if absf(boat_x) < 1.5:
+				boat_x = sg * 1.7
+				steer_target = boat_x
+			twin_boat.reset_pose()
+			world.burst_splash(boat.global_position + Vector3(0.0, 0.6, 0.0))
+			Sfx.play("power", 1.3)
+			ui.popup("TWIN BALLS!", Color("ff6be0"))
+		else:
+			Sfx.play("power", 0.9)
+	var z := ""
+	for pz in portal_zones:
+		if boat_z >= float(pz[0]):
+			z = String(pz[1])
+	if z != zone:
+		var entering := z != "" and boat_z - _zone_z(z) < 3.0
+		zone = z
+		world.set_zone(z)
+		if entering:
+			ui.popup("WELCOME TO %s!" % z, Color("7dfcff"))
+			Sfx.play("boost", 0.9)
+			Sfx.vibrate(40)
+			shake = 0.2
+
+
+func _zone_z(z: String) -> float:
+	var out := 0.0
+	for pz in portal_zones:
+		if String(pz[1]) == z and float(pz[0]) <= boat_z:
+			out = float(pz[0])
+	return out
 
 
 ## Downhill is faster, uphill a bit slower.
@@ -575,10 +651,79 @@ func _check_items() -> void:
 			if not e.taken:
 				_take_current(e)
 		elif e.kind == "ramp":
-			if not e.taken:
+			if not e.taken and boat_z >= float(e.z):
 				_take_ramp(e)
+		elif e.kind in ["portal", "twin_in", "twin_out"]:
+			continue
+		elif e.kind == "speedpad":
+			if not e.taken and grounded:
+				e.taken = true
+				boost_left = LevelGen.BOOST_TIME
+				Sfx.play("boost")
+				Sfx.vibrate(20)
+				ui.popup("ZOOM!", Color("ffc531"))
+		elif e.kind == "crystal":
+			if not e.taken and absf(boat_x - float(e.x)) < 0.95 and ball_y < 1.2:
+				_smash_crystal(e)
+		elif e.kind == "key":
+			if not e.taken and absf(boat_x - float(e.x)) < 1.0 and absf(ball_y + LevelGen.PICK_OFFSET - float(e.y)) < 1.3:
+				_take_key(e)
+		elif e.kind == "pins":
+			if not e.taken and boat_z >= float(e.z) - 0.6:
+				_bowl(e)
 		elif not e.taken and absf(boat_x - float(e.x)) < LevelGen.PICK_RANGE * 1.3 and ball_y < 2.0:
 			_take_pickup(e)
+
+
+## Minecraft-ish crystal blocks: roll through them, they shatter into coins.
+func _smash_crystal(e: Dictionary) -> void:
+	world.take_pickup(e)
+	world.burst_splash(boat.global_position + Vector3(0.0, 0.5, 0.0))
+	var bonus := 15 * Upgrades.coin_value()
+	run_coins += bonus
+	mission_coins += bonus
+	ui.set_coins(Save.coins + run_coins - banked)
+	crystals_run += 1
+	ui.popup("SMASH! +%d" % bonus if crystals_run < 5 else "ALL CRYSTALS! +%d" % bonus, Color("7dfcff"))
+	Sfx.play("star", 1.4 + 0.08 * crystals_run)
+	Sfx.vibrate(25)
+	shake = maxf(shake, 0.12)
+
+
+## Zelda-ish secret: one golden key hidden per level.
+func _take_key(e: Dictionary) -> void:
+	world.take_pickup(e)
+	key_run = true
+	var bonus := 150
+	run_coins += bonus
+	mission_coins += bonus
+	ui.set_coins(Save.coins + run_coins - banked)
+	var first := not Save.keys.has(str(level))
+	ui.popup("SECRET KEY FOUND! +%d" % bonus if first else "KEY! +%d" % bonus, Color("ffc531"))
+	Sfx.play("win", 1.3)
+	Sfx.vibrate(60)
+	shake = 0.25
+
+
+## Wii-Sports-ish bowling at the end of the level.
+func _bowl(e: Dictionary) -> void:
+	e.taken = true
+	var n := world.knock_pins(e, 0.0 if fever_left > 0.0 else boat_x)
+	pins_run = mini(n, 10)
+	var bonus := pins_run * 10
+	if pins_run >= 10:
+		bonus = 250
+		ui.popup("STRIKE!!  +%d" % bonus, Color("ff4fd8"))
+		Sfx.play("win", 1.1)
+		shake = 0.4
+	elif pins_run > 0:
+		ui.popup("%d PINS  +%d" % [pins_run, bonus], Color("ffd166"))
+		Sfx.play("crash", 1.6)
+	if bonus > 0:
+		run_coins += bonus
+		mission_coins += bonus
+		ui.set_coins(Save.coins + run_coins - banked)
+		Sfx.vibrate(50)
 
 
 func _check_pearls() -> void:
@@ -634,6 +779,27 @@ func _take_pickup(e: Dictionary) -> void:
 			boat.show_magnet(true)
 			Sfx.play("power")
 			ui.popup("MAGNET!", Color("ff4fd8"))
+		"box":
+			# Mario-Kart style mystery box
+			var roll := randi() % 4
+			match roll:
+				0:
+					shield = true
+					boat.show_shield(true)
+					ui.popup("? SHIELD!", Color("54e0ff"))
+				1:
+					magnet_left = Upgrades.magnet_time()
+					boat.show_magnet(true)
+					ui.popup("? MAGNET!", Color("ff4fd8"))
+				2:
+					if fever_left <= 0.0:
+						_start_fever()
+				_:
+					run_coins += 100
+					mission_coins += 100
+					ui.set_coins(Save.coins + run_coins - banked)
+					ui.popup("? +100 COINS!", Color("ffd166"))
+			Sfx.play("buy")
 
 
 func _use_shield(e: Dictionary) -> void:
@@ -875,9 +1041,45 @@ func _win() -> void:
 	boost_left = 0.0
 	slow_left = 0.0
 	ui.set_effects({})
+	# Trophy Road: every win pushes you along, milestones give a Moon Drop
+	if key_run and not Save.keys.has(str(level)):
+		Save.keys.append(str(level))
+	var gain := 4 + stars * 2 + (5 if key_run else 0) + (3 if pins_run >= 10 else 0) + (2 if crystals_run >= 5 else 0)
+	var before := Save.trophies
+	Save.trophies += gain
+	var drops := Save.trophies / GameUI.TROPHY_STEP - before / GameUI.TROPHY_STEP
+	Save.save()
+	boat.dance()
 	await get_tree().create_timer(0.9).timeout
 	if state == State.WON:
 		ui.show_win(level, stars, run_coins, special)
+		ui.show_trophies(gain, Save.trophies)
+		if drops > 0:
+			await get_tree().create_timer(2.0).timeout
+			if state == State.WON:
+				ui.show_moon_drop(_moon_drop_reward, func(): ui.set_coins(Save.coins))
+
+
+## Moon Drop prize by rarity (0 = rare ... 4 = legendary).
+func _moon_drop_reward(rarity: int) -> String:
+	Save.trophy_claimed += 1
+	var coins: int = [100, 250, 500, 1000, 2500][rarity]
+	if rarity >= 2:
+		var pool := []
+		for cat in ["hull", "paint", "sail", "flag", "hat", "trail"]:
+			for i in Custom.count(cat):
+				var it := Custom.item(cat, i)
+				if not Save.owns(cat, i) and not Custom.is_exclusive(it):
+					pool.append([cat, i])
+		if not pool.is_empty():
+			var pick: Array = pool[randi() % pool.size()]
+			Save.grant(pick[0], pick[1])
+			Save.coins += coins / 2
+			Save.save()
+			return "NEW %s: %s!\n+%d COINS" % [Custom.CAT_NAMES[pick[0]], Custom.item(pick[0], pick[1]).name, coins / 2]
+	Save.coins += coins
+	Save.save()
+	return "+%d COINS!" % coins
 
 
 ## from_ad = the paid "continue"; false = a free life (levels mode).
@@ -919,9 +1121,12 @@ func _respawn_at(d: float) -> void:
 	fall_t = 0.0
 	air_t = -1.0
 	for e in world.items:
-		if float(e.z) + float(e.depth) * 0.5 > d and not e.get("taken", false):
-			e.passed = false
-			e.min_clear = LevelGen.EDGE
+		if float(e.z) + float(e.depth) * 0.5 > d:
+			if e.kind in ["ramp", "speedpad"] or LevelGen.is_current(e.kind):
+				e.taken = false   # ramps and pads work again after a respawn
+			if not e.get("taken", false):
+				e.passed = false
+				e.min_clear = LevelGen.EDGE
 
 
 func _intros() -> void:
@@ -934,6 +1139,8 @@ func _intros() -> void:
 		var kind: String = e.kind
 		if LevelGen.INTROS.has(kind) and not Save.seen.has(kind):
 			Save.mark_seen(kind)
+			if kind == "twin_in":
+				Save.mark_seen("gate2")
 			var info: Array = LevelGen.INTROS[kind]
 			ui.intro(info[0], info[1])
 			return
@@ -1007,6 +1214,27 @@ func _setup_run(new_data: Dictionary, theme_level: int) -> void:
 	doomed = false
 	fall_t = 0.0
 	last_cp = 2.0
+	crystals_run = 0
+	key_run = false
+	pins_run = 0
+	course = String(data.get("course", "CLASSIC RUN"))
+	twin_ranges.clear()
+	portal_zones.clear()
+	var tin := -1.0
+	for it in data.items:
+		match String(it.kind):
+			"twin_in":
+				tin = float(it.z)
+			"twin_out":
+				twin_ranges.append([tin, float(it.z)])
+			"portal":
+				portal_zones.append([float(it.z), String(it.zone)])
+	in_twin = false
+	zone = ""
+	world.set_zone("")
+	if twin_boat:
+		twin_boat.visible = false
+		twin_boat.apply(Save.boat_cfg())
 	boost_left = 0.0
 	slow_left = 0.0
 	magnet_left = 0.0
@@ -1892,15 +2120,17 @@ func _autotest_tick(delta: float) -> void:
 func _autopilot_x() -> float:
 	if air_t >= 0.0 or not grounded:
 		return steer_target
+	if in_twin:
+		return LevelGen.pilot_target(world.items, boat_z, run_t, speed * _speed_factor() * _slope_factor(), boat_x)
 	for e in world.items:
-		if e.passed or e.taken or e.kind in ["slow", "ramp", "checkpoint"] or LevelGen.is_obstacle(e.kind) or LevelGen.is_void(e.kind):
+		if e.passed or e.taken or e.kind in ["slow", "ramp", "checkpoint", "portal", "twin_in", "twin_out", "speedpad"] or LevelGen.is_obstacle(e.kind) or LevelGen.is_void(e.kind):
 			continue
 		if float(e.z) < boat_z or float(e.z) - boat_z > 12.0:
 			continue
 		# grab pickups only if nothing dangerous is in between
 		var safe := true
 		for o in world.items:
-			if (LevelGen.is_obstacle(o.kind) or LevelGen.is_void(o.kind)) and not o.passed and float(o.z) > boat_z - 1.0 and float(o.z) < float(e.z) + 1.0:
+			if (LevelGen.is_obstacle(o.kind) or LevelGen.is_void(o.kind)) and not o.passed and float(o.z) + float(o.depth) * 0.5 > boat_z - 1.0 and float(o.z) - float(o.depth) * 0.5 < float(e.z) + 1.0:
 				safe = false
 		if safe:
 			return float(e.x)

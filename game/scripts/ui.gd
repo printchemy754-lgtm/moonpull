@@ -65,6 +65,9 @@ var daily_panel: Control
 var pause_panel: Control
 var lose_panel: Control
 var win_panel: Control
+var win_trophy: Label
+var win_road: ProgressBar
+var drop_layer: Control
 var blocker: ColorRect
 var fader: ColorRect
 
@@ -185,8 +188,8 @@ var win_skip: Button
 
 func _ready() -> void:
 	layer = 10
-	font = load("res://fonts/Exo2-Bold.ttf")
-	title_font = load("res://fonts/Exo2-BlackItalic.ttf")
+	font = load("res://fonts/Montserrat-ExtraBold.ttf")
+	title_font = load("res://fonts/Montserrat-Black.ttf")
 	var th := Theme.new()
 	th.default_font = font
 	th.default_font_size = 38
@@ -1509,6 +1512,15 @@ func _build_win() -> void:
 	var cr := _coin_row(60)
 	box.add_child(cr[0])
 	win_coins = cr[1]
+	win_trophy = _label("", 34, Color("ffd166"), 8)
+	box.add_child(win_trophy)
+	win_road = ProgressBar.new()
+	win_road.show_percentage = false
+	win_road.custom_minimum_size = Vector2(480, 22)
+	win_road.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	win_road.add_theme_stylebox_override("background", _style(Color("1a1440"), 11, 0))
+	win_road.add_theme_stylebox_override("fill", _style(Color("ffb020"), 11, 0))
+	box.add_child(win_road)
 	win_mult = MultiplierBar.new()
 	win_mult.font = font
 	win_mult.changed.connect(func(m: int): _set_btn_text(win_claim, "CLAIM x%d" % m))
@@ -1899,6 +1911,112 @@ func show_win(level: int, stars: int, run_coins: int, special := "normal") -> vo
 			s.create_tween().tween_property(s, "scale", Vector2.ONE, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT))
 		tw.tween_interval(0.28)
 	tw.tween_method(func(v: float): win_coins.text = fmt(int(v)), 0.0, float(run_coins), 0.6)
+
+
+## Trophy Road line on the win screen. gain = trophies earned this level.
+func show_trophies(gain: int, total: int) -> void:
+	var step := TROPHY_STEP
+	var base := (total / step) * step
+	win_trophy.text = "TROPHIES +%d   ·   ROAD %d / %d" % [gain, total, base + step]
+	win_road.max_value = step
+	win_road.value = float(maxi(total - gain, base) - base)
+	win_road.create_tween().tween_property(win_road, "value", float(total - base), 0.8).set_delay(0.5)
+
+
+const TROPHY_STEP := 25
+const DROP_NAMES := ["RARE", "SUPER RARE", "EPIC", "MYTHIC", "LEGENDARY"]
+const DROP_COLORS := [Color("39ff9f"), Color("4ea8ff"), Color("b14dff"), Color("ff3d5a"), Color("ffc531")]
+
+
+## Moon Drop: tap it 4 times, every tap may upgrade the rarity, then the prize.
+## reward(rarity) -> String is called once and its text is shown.
+func show_moon_drop(reward: Callable, on_done: Callable) -> void:
+	if drop_layer:
+		drop_layer.queue_free()
+	var layer := Control.new()
+	layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	layer.mouse_filter = Control.MOUSE_FILTER_STOP
+	root.add_child(layer)
+	drop_layer = layer
+	var dim := ColorRect.new()
+	dim.color = Color(0.02, 0.0, 0.08, 0.85)
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(dim)
+	var col := VBoxContainer.new()
+	col.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	col.alignment = BoxContainer.ALIGNMENT_CENTER
+	col.add_theme_constant_override("separation", 36)
+	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(col)
+	var title := _label("MOON DROP!", 84, GOLD, 16)
+	col.add_child(title)
+	var orb_holder := CenterContainer.new()
+	orb_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	orb_holder.custom_minimum_size = Vector2(0, 340)
+	col.add_child(orb_holder)
+	var orb := Panel.new()
+	orb.custom_minimum_size = Vector2(300, 300)
+	orb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	orb_holder.add_child(orb)
+	var face := _label("?", 140, Color.WHITE, 16)
+	face.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	orb.add_child(face)
+	var rar := _label(DROP_NAMES[0], 60, DROP_COLORS[0], 12)
+	col.add_child(rar)
+	var hint_l := _label("TAP!  4", 44, Color.WHITE, 10)
+	col.add_child(hint_l)
+	var st := {"rarity": 0, "taps": 0, "done": false}
+	var paint := func():
+		var c: Color = DROP_COLORS[int(st.rarity)]
+		var sb := _style(c.darkened(0.25), 150, 0)
+		sb.border_width_left = 8
+		sb.border_width_right = 8
+		sb.border_width_top = 8
+		sb.border_width_bottom = 8
+		sb.border_color = c.lightened(0.4)
+		sb.shadow_color = Color(c.r, c.g, c.b, 0.6)
+		sb.shadow_size = 40
+		orb.add_theme_stylebox_override("panel", sb)
+		rar.text = DROP_NAMES[int(st.rarity)]
+		rar.label_settings.font_color = c
+	paint.call()
+	_pop(layer)
+	Sfx.play("star", 0.8)
+	layer.gui_input.connect(func(ev: InputEvent):
+		var tap: bool = (ev is InputEventMouseButton and ev.pressed) or (ev is InputEventScreenTouch and ev.pressed)
+		if not tap:
+			return
+		if st.done:
+			layer.queue_free()
+			drop_layer = null
+			on_done.call()
+			return
+		st.taps = int(st.taps) + 1
+		orb.pivot_offset = orb.size * 0.5
+		var up: bool = int(st.rarity) < 4 and randf() < [0.55, 0.4, 0.3, 0.2][int(st.rarity)]
+		if up:
+			st.rarity = int(st.rarity) + 1
+			paint.call()
+			Sfx.play("power", 1.0 + 0.15 * int(st.rarity))
+			Sfx.vibrate(50)
+			orb.scale = Vector2(1.35, 1.35)
+		else:
+			Sfx.play("star", 1.0 + 0.1 * int(st.taps))
+			Sfx.vibrate(20)
+			orb.scale = Vector2(1.12, 1.12)
+		orb.create_tween().tween_property(orb, "scale", Vector2.ONE, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		hint_l.text = "TAP!  %d" % (4 - int(st.taps))
+		if int(st.taps) >= 4:
+			st.done = true
+			var txt: String = reward.call(int(st.rarity))
+			face.text = "!"
+			face.label_settings.font_size = 120
+			title.text = txt
+			title.label_settings.font_size = 56
+			hint_l.text = "tap to continue"
+			Sfx.play("win", 1.0)
+			Sfx.vibrate(80))
 
 
 ## "No thanks" appears a moment later, so the player sees the offer first.
