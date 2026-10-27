@@ -735,7 +735,7 @@ func _build_menu() -> void:
 	power_btn.pressed.connect(func(): upgrades_pressed.emit())
 	menu.add_child(power_btn)
 
-	menu_hint = _label("HOLD ANYWHERE\nTO SAIL", 36, Color.WHITE, 12)
+	menu_hint = _label("TAP TO SAIL\nSLIDE TO STEER", 36, Color.WHITE, 12)
 	_place(menu_hint, Control.PRESET_TOP_WIDE, 150, top + 704, -150, top + 800)
 	menu.add_child(menu_hint)
 	var tw := menu_hint.create_tween().set_loops()
@@ -1628,7 +1628,7 @@ func show_menu(level: int, coins: int, world_name: String, world_no: int, step: 
 			tw.tween_property(node, "scale", Vector2(1.15, 1.15), 0.35)
 			tw.tween_property(node, "scale", Vector2.ONE, 0.35)
 	var sp := LevelGen.special_for(level)
-	menu_hint.text = "BOSS FIGHT!\nHOLD TO SAIL" if sp == "boss" else ("COIN RUSH!\nHOLD TO SAIL" if sp == "rush" else "HOLD ANYWHERE\nTO SAIL")
+	menu_hint.text = "BOSS FIGHT!\nTAP TO SAIL" if sp == "boss" else ("COIN RUSH!\nTAP TO SAIL" if sp == "rush" else "TAP TO SAIL\nSLIDE TO STEER")
 	menu_hint.label_settings.font_color = Color("ff6be0") if sp == "boss" else (GOLD if sp == "rush" else Color.WHITE)
 	logo.modulate.a = 0.0
 	logo.create_tween().tween_property(logo, "modulate:a", 1.0, 0.5)
@@ -2085,20 +2085,24 @@ func intro(title: String, desc: String) -> void:
 	tw.tween_callback(func(): intro_panel.visible = false)
 
 
-func hint(text: String, up: bool) -> void:
+## dir: "left" / "right" (or the old "up"/"down" as bool true/false)
+func hint(text: String, dir: Variant) -> void:
 	if hint_box.visible and hint_label.text == text:
 		return
+	var kind: String = dir if dir is String else ("up" if dir else "down")
 	hint_label.text = text
-	hint_icon.set_kind("up" if up else "down")
+	hint_icon.set_kind(kind)
 	hint_box.visible = true
 	hint_box.modulate.a = 1.0
 	if _hint_tw:
 		_hint_tw.kill()
 	hint_icon.offset_top = 0
 	hint_icon.offset_bottom = 80
+	var prop := "position:x" if kind == "left" or kind == "right" else "position:y"
+	var d := -14.0 if kind == "up" or kind == "left" else 14.0
 	_hint_tw = hint_icon.create_tween().set_loops(6)
-	_hint_tw.tween_property(hint_icon, "position:y", -14.0 if up else 14.0, 0.3).as_relative()
-	_hint_tw.tween_property(hint_icon, "position:y", 14.0 if up else -14.0, 0.3).as_relative()
+	_hint_tw.tween_property(hint_icon, prop, d, 0.3).as_relative()
+	_hint_tw.tween_property(hint_icon, prop, -d, 0.3).as_relative()
 
 
 func hide_hint() -> void:

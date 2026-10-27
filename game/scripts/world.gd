@@ -114,7 +114,7 @@ func build_level(data: Dictionary, level: int, wall_left := "canyon", wall_right
 	ps.sort_custom(func(a: Vector3, b: Vector3): return a.z < b.z)
 	for pos in ps:
 		var v: Vector3 = pos
-		pearls.append({"y": v.y, "z": v.z, "taken": false})
+		pearls.append({"x": v.x, "y": v.y, "z": v.z, "taken": false})
 	_next_item = 0
 	_next_pearl = 0
 	finish_z = data.finish
@@ -156,7 +156,7 @@ func _stream(boat_z: float) -> void:
 	while _next_pearl < pearls.size() and float(pearls[_next_pearl].z) < ahead:
 		var p: Dictionary = pearls[_next_pearl]
 		if not p.taken:
-			var mi := _mi(level_root, _coin_mesh, _coin_mat_cur, Vector3(0.0, p.y, p.z))
+			var mi := _mi(level_root, _coin_mesh, _coin_mat_cur, Vector3(p.x, p.y, p.z))
 			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			p["node"] = mi
 		_next_pearl += 1
@@ -427,36 +427,129 @@ func _spawn_item(e: Dictionary) -> void:
 	level_root.add_child(root)
 	e["node"] = root
 	match e.kind:
-		"reef":
-			_build_reef(root, e.h)
-			e["foam"] = _foam(root)
-		"bridge":
-			_build_bridge(root, e.b)
-		"gate":
-			_build_reef(root, e.h)
-			_build_bridge(root, e.b)
-			e["foam"] = _foam(root)
-		"breather":
+		"wall", "gate2":
+			for b in e.blocks:
+				_barrier(root, (b as Vector2).x, (b as Vector2).y, bool(e.get("air", false)))
+			if not e.get("air", false):
+				for r in LevelGen.free_ranges(e, 0.0):
+					_door_marks(root, (r as Vector2).x - LevelGen.BOAT_HALF_W, (r as Vector2).y + LevelGen.BOAT_HALF_W)
+		"block":
+			for b in e.blocks:
+				_cargo(root, (b as Vector2).x, (b as Vector2).y)
+		"mines":
+			_build_mines(root, e)
+		"slider":
 			var mover := Node3D.new()
 			root.add_child(mover)
-			_build_reef(mover, e.h + e.amp, 3.6)
+			var hw := float(e.gw) * 0.5
+			var far := LevelGen.RIVER_W + float(e.amp) + 1.0
+			_barrier(mover, -far, -hw, false)
+			_barrier(mover, hw, far, false)
+			_door_marks(mover, -hw, hw)
 			e["mover"] = mover
-			e["foam"] = _foam(root)
-		"drawbridge":
-			_build_drawbridge(root, e)
-		"slider":
-			_build_slider(root, e)
-			e["foam"] = _foam(root)
-		"mine":
-			_build_mine(root, e)
-		"geyser", "vortex":
-			_build_current(root, e)
+		"sweeper":
+			var mv := Node3D.new()
+			root.add_child(mv)
+			_cargo(mv, -float(e.hw), float(e.hw))
+			e["mover"] = mv
 		"ramp":
 			_build_ramp(root, e)
 		"boost", "slow":
 			_build_ring(root, e)
 		"shield", "magnet":
 			_build_orb(root, e)
+
+
+## Energy barrier between x0 and x1 (clipped to the river), WALL_H above the water.
+func _barrier(root: Node3D, x0: float, x1: float, tall: bool) -> void:
+	var half := LevelGen.RIVER_W * 0.5 + 0.4
+	x0 = maxf(x0, -half - 6.0)
+	x1 = minf(x1, half + 6.0)
+	if x1 - x0 < 0.05:
+		return
+	var w := x1 - x0
+	var cx := (x0 + x1) * 0.5
+	var top := LevelGen.WATER_REST + LevelGen.WALL_H
+	var bottom := LevelGen.FLOOR_Y
+	var metal := _mat("pylon", theme.rock, 0.6)
+	var glow := _mat("pylon_tip", theme.rock_tip, 0.3, theme.tip_glow, 0.025)
+	var panel := _fx_mat("barrier_panel", Color(theme.rock_tip, 0.32), 1.2)
+	# translucent energy panel
+	var pm := _box(root, Vector3(w, top - LevelGen.WATER_REST + 0.3, 0.12), Vector3(cx, (top + LevelGen.WATER_REST - 0.3) * 0.5, 0.0), panel)
+	pm.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# solid base under the waterline and a glowing top rail
+	_box(root, Vector3(w, LevelGen.WATER_REST + 0.25 - bottom, 0.7), Vector3(cx, (LevelGen.WATER_REST + 0.25 + bottom) * 0.5, 0.0), metal)
+	_box(root, Vector3(w, 0.18, 0.3), Vector3(cx, top, 0.0), glow)
+	_box(root, Vector3(w, 0.06, 0.32), Vector3(cx, LevelGen.WATER_REST + 0.9, 0.0), glow)
+	# posts
+	var n := maxi(int(w / 1.6), 1)
+	for k in n + 1:
+		var px := lerpf(x0, x1, float(k) / n)
+		if absf(px) > half + 0.5:
+			continue
+		_box(root, Vector3(0.22, top - bottom, 0.42), Vector3(px, (top + bottom) * 0.5, 0.0), metal)
+	if tall:
+		# jump wall: warning stripes on the panel
+		for k in 6:
+			var sx := lerpf(-LevelGen.RIVER_W * 0.5 + 0.6, LevelGen.RIVER_W * 0.5 - 0.6, k / 5.0)
+			_box(root, Vector3(0.5, 0.5, 0.14), Vector3(sx, top - 0.6, 0.0), _mat("jump_mark", Color("ffd23f"), 0.3, 2.0, 0.0), Vector3(0.0, 0.0, PI * 0.25))
+
+
+## Green glowing door posts + arrow on the water: "go through here".
+func _door_marks(root: Node3D, x0: float, x1: float) -> void:
+	var half := LevelGen.RIVER_W * 0.5
+	var go := _mat("door_go", Color("39ff9f"), 0.2, 3.5, 0.0)
+	var top := LevelGen.WATER_REST + LevelGen.WALL_H
+	for px in [x0, x1]:
+		if absf(px) < half + 0.2:
+			_box(root, Vector3(0.12, top - LevelGen.WATER_REST + 0.2, 0.5), Vector3(px, (top + LevelGen.WATER_REST) * 0.5, 0.0), go)
+	var cx := clampf((x0 + x1) * 0.5, -half + 0.8, half - 0.8)
+	var pr := PrismMesh.new()
+	pr.size = Vector3(0.9, 0.7, 0.04)
+	var arrow := _mi(root, pr, _fx_mat("door_arrow", Color(0.2, 1.0, 0.6, 0.75), 2.5), Vector3(cx, LevelGen.WATER_REST + 0.06, -2.2), Vector3(-PI * 0.5, 0.0, 0.0))
+	arrow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+
+## Stack of neon cargo crates between x0 and x1.
+func _cargo(root: Node3D, x0: float, x1: float) -> void:
+	var w := x1 - x0
+	var cx := (x0 + x1) * 0.5
+	var crate := _mat("crate_body", theme.get("metal", Color("3a3f6a")), 0.5)
+	var edge := _mat("crate_edge", theme.get("neon", Color("ff2fd0")), 0.2, 3.0, 0.0)
+	var n := maxi(int(round(w / 1.25)), 1)
+	var cw := w / n
+	for k in n:
+		var bx := x0 + cw * (k + 0.5)
+		var hgt := 1.9 if k % 2 == 0 else 2.4
+		var base := LevelGen.WATER_REST - 0.4
+		_box(root, Vector3(cw - 0.08, hgt, 1.5), Vector3(bx, base + hgt * 0.5, 0.0), crate)
+		_box(root, Vector3(cw - 0.02, 0.08, 1.54), Vector3(bx, base + hgt, 0.0), edge)
+		_box(root, Vector3(0.08, hgt, 1.54), Vector3(bx - cw * 0.5 + 0.06, base + hgt * 0.5, 0.0), edge)
+	_box(root, Vector3(w, LevelGen.WATER_REST - 0.4 - LevelGen.FLOOR_Y, 1.4), Vector3(cx, (LevelGen.WATER_REST - 0.4 + LevelGen.FLOOR_Y) * 0.5, 0.0), crate)
+
+
+## Floating plasma orbs.
+func _build_mines(root: Node3D, e: Dictionary) -> void:
+	var core := _mat("mine_core", Color("ff3d5a"), 0.3, 3.5, 0.03)
+	var shell := _mat("mine_shell", Color("2a2140"), 0.4)
+	var spike := _mat("mine_spike", Color("ffd166"), 0.3, 1.5, 0.02)
+	var spin := Node3D.new()
+	root.add_child(spin)
+	for b in e.blocks:
+		var v: Vector2 = b
+		var r := (v.y - v.x) * 0.5
+		var orb := Node3D.new()
+		orb.position = Vector3((v.x + v.y) * 0.5, LevelGen.WATER_REST + 0.7, 0.0)
+		spin.add_child(orb)
+		_ball(orb, r * 0.9, Vector3.ZERO, shell)
+		_ball(orb, r * 0.5, Vector3(0.0, 0.0, -r * 0.6), core)
+		for k in 8:
+			var a := TAU * k / 8.0
+			var dir := Vector3(cos(a), sin(a), 0.0)
+			_cone(orb, 0.1, 0.0, r * 0.6, dir * r * 1.05, spike, 4, Vector3(0.0, 0.0, a - PI * 0.5))
+		var tether := _box(spin, Vector3(0.05, 1.2, 0.05), Vector3((v.x + v.y) * 0.5, LevelGen.WATER_REST - 0.1, 0.0), _mat("mine_tether", Color("1e1b2e"), 0.5, 0.0, 0.0))
+		tether.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	e["spinner"] = spin
 
 
 func _foam(root: Node3D) -> MeshInstance3D:
@@ -674,14 +767,15 @@ func _build_ramp(root: Node3D, e: Dictionary) -> void:
 	var neon := _mat("ramp_neon", theme.get("neon2", Color("00e5ff")), 0.2, 3.0, 0.0)
 	var deck := _mat("ramp_deck", theme.get("metal", Color("3a3f6a")), 0.5)
 	var slope := atan2(1.1, 3.0)
-	_box(pad, Vector3(3.4, 0.2, 3.2), Vector3(0.0, 0.45, 0.0), deck, Vector3(-slope, 0.0, 0.0))
-	for sx in [-1.75, 1.75]:
+	_box(pad, Vector3(LevelGen.RIVER_W - 0.4, 0.2, 3.2), Vector3(0.0, 0.45, 0.0), deck, Vector3(-slope, 0.0, 0.0))
+	for sx in [-LevelGen.RIVER_W * 0.5 + 0.2, LevelGen.RIVER_W * 0.5 - 0.2]:
 		_box(pad, Vector3(0.12, 0.3, 3.2), Vector3(sx, 0.55, 0.0), neon, Vector3(-slope, 0.0, 0.0))
 	for k in 3:
-		var pr := PrismMesh.new()
-		pr.size = Vector3(1.2, 0.5, 0.06)
-		var ch := _mi(pad, pr, _mat("ramp_chev", theme.get("neon", Color("ff2fd0")), 0.2, 3.0, 0.0), Vector3(0.0, 0.25 + k * 0.33, -1.0 + k * 0.9), Vector3(-PI * 0.5 - slope, 0.0, 0.0))
-		ch.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		for cx in [-2.4, 0.0, 2.4]:
+			var pr := PrismMesh.new()
+			pr.size = Vector3(1.2, 0.5, 0.06)
+			var ch := _mi(pad, pr, _mat("ramp_chev", theme.get("neon", Color("ff2fd0")), 0.2, 3.0, 0.0), Vector3(cx, 0.25 + k * 0.33, -1.0 + k * 0.9), Vector3(-PI * 0.5 - slope, 0.0, 0.0))
+			ch.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	e["pad"] = pad
 
 
@@ -700,7 +794,7 @@ func _build_ring(root: Node3D, e: Dictionary) -> void:
 	var boost: bool = e.kind == "boost"
 	var col := Color("ffc531") if boost else Color("8fd8ff")
 	var spinner := Node3D.new()
-	spinner.position = Vector3(0.0, e.y, 0.0)
+	spinner.position = Vector3(e.x, e.y, 0.0)
 	root.add_child(spinner)
 	_torus(spinner, 1.15, 1.42, Vector3.ZERO, _mat("ring_" + e.kind, col, 0.3, 2.2), Vector3(PI * 0.5, 0.0, 0.0))
 	if boost:
@@ -723,7 +817,7 @@ func _build_orb(root: Node3D, e: Dictionary) -> void:
 	var shield: bool = e.kind == "shield"
 	var col := Color("54e0ff") if shield else Color("ff4fd8")
 	var spinner := Node3D.new()
-	spinner.position = Vector3(0.0, e.y, 0.0)
+	spinner.position = Vector3(e.x, e.y, 0.0)
 	root.add_child(spinner)
 	_ball(spinner, 0.45, Vector3.ZERO, _mat("orb_" + e.kind, col, 0.2, 1.8))
 	_torus(spinner, 0.62, 0.7, Vector3.ZERO, _mat("orbring_" + e.kind, Color.WHITE, 0.3, 1.5), Vector3(0.4, 0.0, 0.0))
@@ -1017,30 +1111,19 @@ func update(delta: float, run_t: float, t: float, water_y: float, boat_z: float,
 		if z < near or z > far or not e.has("node") or e.get("gone", false):
 			continue
 		match e.kind:
-			"breather":
-				var mv: Node3D = e.mover
-				mv.position.y = LevelGen.h_at(e, run_t) - (float(e.h) + float(e.amp))
-			"drawbridge":
-				var dk: Node3D = e.mover
-				var by := LevelGen.b_at(e, run_t)
-				dk.position.y = by
-				var top: float = e.chain_top
-				for c in e.chains:
-					var ch: MeshInstance3D = c
-					var length := maxf(top - (by + 0.5), 0.05)
-					ch.position.y = by + 0.5 + length * 0.5
-					ch.scale = Vector3(1.0, length, 1.0)
-			"slider":
-				var sm: Node3D = e.mover
-				sm.position.y = LevelGen.h_at(e, run_t) - float(e.h)
-			"mine":
+			"slider", "sweeper":
+				var mvr: Node3D = e.mover
+				if e.kind == "slider":
+					mvr.position.x = float(e.gx) + float(e.amp) * LevelGen.wave(e, run_t)
+				else:
+					mvr.position.x = float(e.amp) * LevelGen.wave(e, run_t)
+			"mines":
 				if not e.get("smashed", false):
 					var ms: Node3D = e.spinner
 					for orb in ms.get_children():
-						if orb is Node3D and not (orb is MeshInstance3D):
+						if not (orb is MeshInstance3D):
 							(orb as Node3D).rotation.z += delta * 2.5
-					var pulse := 1.0 + sin(t * 6.0 + z) * 0.06
-					ms.scale = Vector3(1.0, pulse, pulse)
+							(orb as Node3D).position.y = LevelGen.WATER_REST + 0.7 + sin(t * 3.0 + z + (orb as Node3D).position.x) * 0.12
 			"ramp":
 				(e.pad as Node3D).position.y = water_y
 			"geyser", "vortex":
@@ -1054,11 +1137,7 @@ func update(delta: float, run_t: float, t: float, water_y: float, boat_z: float,
 					if e.kind == "shield" or e.kind == "magnet":
 						sp.rotation.y += delta * 2.0
 						sp.position.y = float(e.y) + sin(t * 2.5 + z) * 0.1
-		if e.has("foam") and not e.get("smashed", false):
-			var foam: MeshInstance3D = e.foam
-			var h := LevelGen.h_at(e, run_t)
-			foam.visible = h > water_y - 0.15
-			foam.position.y = water_y + 0.03
+
 
 	for i in range(maxi(_next_pearl - 120, 0), _next_pearl):
 		var p: Dictionary = pearls[i]

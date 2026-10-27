@@ -15,6 +15,8 @@ var finished := false
 var finish_time := 0.0
 var respawn_left := 0.0
 var lane_x := 2.6
+var x := 0.0               # sideways position (steering)
+var _target_x := 0.0
 var boat: Boat
 var _decide := 0.0
 var _tag: Label3D
@@ -27,6 +29,7 @@ var air_t := -1.0
 func setup(rname: String, cfg: Dictionary, x: float, remote := false) -> void:
 	display_name = rname
 	lane_x = x
+	self.x = x
 	is_remote = remote
 	boat = Boat.new()
 	add_child(boat)
@@ -73,17 +76,12 @@ func simulate(delta: float, items: Array, run_t: float, speed: float, rise: floa
 	_decide -= delta
 	if _decide <= 0.0:
 		_decide = skill * randf_range(0.8, 1.3)
-		var tgt := LevelGen.pilot_target(items, z, run_t, speed, water)
-		tgt += randf_range(-0.12, 0.12)
-		holding = water + vel * absf(vel) / 32.0 + vel * skill * 0.5 < tgt
-	vel = move_toward(vel, rise if holding else -fall, 16.0 * delta)
-	water += vel * delta
-	if water <= LevelGen.WATER_MIN:
-		water = LevelGen.WATER_MIN
-		vel = maxf(vel, 0.0)
-	elif water >= LevelGen.WATER_MAX:
-		water = LevelGen.WATER_MAX
-		vel = minf(vel, 0.0)
+		_target_x = LevelGen.pilot_target(items, z, run_t, speed, x) + randf_range(-0.15, 0.15)
+		holding = absf(_target_x - x) > 0.2
+	var nx := move_toward(x, _target_x, 7.0 * delta)
+	vel = (nx - x) / maxf(delta, 0.001)
+	x = nx
+	water = LevelGen.WATER_REST
 	z += speed * delta
 	if air_t >= 0.0:
 		air_t += delta
@@ -98,7 +96,7 @@ func simulate(delta: float, items: Array, run_t: float, speed: float, rise: floa
 				e["rival_%d" % get_instance_id()] = true
 				air_t = 0.0
 				boat.start_trick(randi() % 3)
-	if LevelGen.hits(items, z, water, run_t):
+	if LevelGen.hits(items, z, x, run_t):
 		crash(items, speed)
 		return false
 	if z >= finish_z:
@@ -114,7 +112,11 @@ func crash(items: Array, speed: float) -> void:
 	respawn_left = 1.3
 	boat.crash()
 	z = LevelGen.respawn_z(items, z, speed)
-	water = LevelGen.WATER_REST + 0.6
+	for e in items:
+		if LevelGen.is_obstacle(e.kind) and not e.get("air", false) and float(e.z) > z:
+			x = LevelGen.safe_x(e, 0.0, x)
+			_target_x = x
+			break
 
 
 ## Remote player: smoothly follow the last received state.
@@ -133,8 +135,9 @@ func net_state(nz: float, nw: float, h: bool, a: bool) -> void:
 func update_visual(delta: float, t: float) -> void:
 	if is_remote:
 		z = lerpf(z, _target_z, 1.0 - exp(-10.0 * delta))
-		water = lerpf(water, _target_water, 1.0 - exp(-10.0 * delta))
-	var lift := LevelGen.jump_height(air_t / LevelGen.JUMP_TIME, water) if air_t >= 0.0 else 0.0
-	position = Vector3(lane_x, water + lift, z)
-	boat.tick(delta, t, vel, 1.0, alive, holding)
+		x = lerpf(x, _target_water, 1.0 - exp(-10.0 * delta))
+	var lift := LevelGen.jump_height(air_t / LevelGen.JUMP_TIME) if air_t >= 0.0 else 0.0
+	position = Vector3(x, LevelGen.WATER_REST + lift, z)
+	rotation.z = clampf(-vel * 0.04, -0.35, 0.35)
+	boat.tick(delta, t, 0.0, 1.0, alive, holding)
 	_ring.position.y = 0.02
