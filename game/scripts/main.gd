@@ -179,6 +179,11 @@ func _ready() -> void:
 	ui.share_pressed.connect(_on_share)
 	ui.mystery_open.connect(_on_mystery)
 	ui.shop_action.connect(_on_shop_action)
+	ui.tab_pressed.connect(_on_tab)
+	ui.shop_step.connect(func(dir: int):
+		var order: Array = Custom.ball_order() if shop_cat == "hull" else range(Custom.count(shop_cat))
+		var pos := order.find(shop_index)
+		_on_shop_pick(int(order[(pos + dir + order.size()) % order.size()])))
 	ui.free_pressed.connect(_on_free)
 	ui.daily_claim.connect(_on_daily_claim)
 	ui.privacy_pressed.connect(func(): Ads.show_privacy_options())
@@ -595,14 +600,19 @@ func _update_camera(delta: float) -> void:
 		"menu":
 			var a := t * 0.15
 			pos = bp + sd * (3.6 + sin(a) * 0.5) + Vector3.UP * 1.9 + fwd * (4.2 + cos(a) * 0.5)
-			look = bp - Vector3.UP * 1.6 + fwd * 0.4   # ball sits high on screen, under the logo
+			look = bp - Vector3.UP * 0.35 + fwd * 0.4
 			fov = 62.0
 			rate = 3.0
 		"shop":
 			var a2 := t * 0.45
-			pos = bp + Vector3(sin(a2) * 3.0, 1.6, cos(a2) * 3.0)
-			look = bp + Vector3(0.0, -0.35, 0.0)
+			pos = bp + Vector3(sin(a2) * 4.8, 2.3, cos(a2) * 4.8)
+			look = bp + Vector3(0.0, -1.25, 0.0)
 			fov = 58.0
+			rate = 4.0
+		"shop_sky":
+			pos = bp - fwd * 3.0 + Vector3.UP * 1.2
+			look = bp + fwd * 30.0 + Vector3.UP * 9.0
+			fov = 80.0
 			rate = 4.0
 		"shop_walls":
 			pos = bp - fwd * 8.0 + Vector3.UP * 4.0
@@ -1865,6 +1875,31 @@ func _on_boats() -> void:
 	state = State.SHOP
 	cam_mode = "shop"
 	_on_shop_tab("hull")
+	ui.set_tab("balls")
+
+
+## Bottom tab bar.
+func _on_tab(tab: String) -> void:
+	if state != State.MENU and state != State.SHOP:
+		return
+	for m in ui._modals:
+		m.visible = false
+	if state == State.SHOP and tab != "balls":
+		_on_shop_back()
+	ui.set_tab(tab)
+	match tab:
+		"play":
+			pass
+		"balls":
+			if state == State.MENU:
+				_on_boats()
+		"shop":
+			_update_free_button()
+			ui.show_shop_hub(Save.coins)
+		"tasks":
+			_show_tasks()
+		"race":
+			_show_lobby()
 
 
 func _on_shop_tab(cat: String) -> void:
@@ -1885,7 +1920,11 @@ func _refresh_shop() -> void:
 	preview[shop_slot] = shop_index
 	boat.apply(preview)
 	boat.reset_pose()
-	if shop_cat == "wall":
+	world.preview_sky(int(preview.get("sky", 0)))
+	if shop_cat == "sky":
+		cam_mode = "shop_sky"
+		_restore_walls()
+	elif shop_cat == "wall":
 		var ws := _wall_styles(int(preview.wall_l), int(preview.wall_r))
 		world.set_walls(ws[0], ws[1])
 		cam_mode = "shop_walls"
@@ -1924,6 +1963,7 @@ func _on_shop_action() -> void:
 
 func _on_shop_back() -> void:
 	boat.apply(Save.boat_cfg())
+	world.preview_sky(Save.equipped("sky"))
 	_walls_shown = ""
 	_restore_walls()
 	state = State.MENU

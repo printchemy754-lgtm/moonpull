@@ -47,6 +47,25 @@ func _draw() -> void:
 	var r := minf(size.x, size.y) * 0.5
 	var w := maxf(r * 0.16, 2.0)
 	match kind:
+		"hard":
+			# warning sign: dark-rimmed red triangle with a skull (text is a Label on top)
+			var tri := PackedVector2Array([c + Vector2(0, -r * 0.95), c + Vector2(r * 0.98, r * 0.78), c + Vector2(-r * 0.98, r * 0.78)])
+			var outer := PackedVector2Array([c + Vector2(0, -r * 1.12), c + Vector2(r * 1.14, r * 0.88), c + Vector2(-r * 1.14, r * 0.88)])
+			draw_colored_polygon(outer, Color("1b1838"))
+			draw_colored_polygon(tri, Color.WHITE)
+			var inner := PackedVector2Array([c + Vector2(0, -r * 0.78), c + Vector2(r * 0.84, r * 0.7), c + Vector2(-r * 0.84, r * 0.7)])
+			draw_colored_polygon(inner, color)
+			var sk := c + Vector2(0, -r * 0.05)
+			draw_circle(sk, r * 0.26, Color.WHITE)
+			draw_rect(Rect2(sk + Vector2(-r * 0.15, r * 0.12), Vector2(r * 0.3, r * 0.2)), Color.WHITE)
+			draw_circle(sk + Vector2(-r * 0.1, 0.0), r * 0.075, Color("1b1838"))
+			draw_circle(sk + Vector2(r * 0.1, 0.0), r * 0.075, Color("1b1838"))
+			for k in 3:
+				draw_line(sk + Vector2(-r * 0.09 + k * r * 0.09, r * 0.2), sk + Vector2(-r * 0.09 + k * r * 0.09, r * 0.32), Color("1b1838"), maxf(r * 0.03, 1.0))
+		"bag":
+			draw_rect(Rect2(c + Vector2(-r * 0.62, -r * 0.3), Vector2(r * 1.24, r * 1.05)), color)
+			draw_arc(c + Vector2(0, -r * 0.3), r * 0.36, PI, TAU, 16, color, w * 0.9, true)
+			draw_rect(Rect2(c + Vector2(-r * 0.62, -r * 0.05), Vector2(r * 1.24, r * 0.14)), Color(0, 0, 0, 0.25))
 		"star":
 			draw_colored_polygon(_star_points(c, r, r * 0.45), color)
 		"star_empty":

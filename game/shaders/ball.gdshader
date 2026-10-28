@@ -7,6 +7,9 @@ shader_type spatial;
 uniform int pattern = 1;
 uniform vec4 col_a : source_color = vec4(1.0);
 uniform vec4 col_b : source_color = vec4(0.0, 0.0, 0.0, 1.0);
+uniform vec4 col_c : source_color = vec4(1.0, 1.0, 1.0, 1.0);
+// 20 stripes  21 checker  22 dots  23 swirl  24 halves  25 zigzag band
+// 26 sparkle gradient  27 rings  28 stars  29 flame  30 pumpkin  31 ornament
 
 varying vec3 p;
 
@@ -113,6 +116,60 @@ void fragment() {
 		if (p.z > 0.75) c = vec3(1.0);
 		if (p.z > 0.75 && length(p.xy - vec2(0.0, 0.0)) < 0.25) c = vec3(0.04);
 		rough = 0.1;
+	}
+	if (pattern >= 20) {
+		vec3 A = col_a.rgb; vec3 B = col_b.rgb; vec3 C = col_c.rgb;
+		float lat = asin(clamp(p.y, -1.0, 1.0));
+		rough = 0.35;
+		if (pattern == 20) {
+			c = mod(floor((lon + PI) / (PI / 4.0)), 2.0) < 1.0 ? A : B;
+		} else if (pattern == 21) {
+			float k = mod(floor((lon + PI) * 6.0 / PI) + floor((lat + PI) * 6.0 / PI), 2.0);
+			c = k < 1.0 ? A : B;
+		} else if (pattern == 22) {
+			vec3 q = p * 4.0;
+			vec3 f = fract(q) - 0.5;
+			c = length(f) < 0.28 ? B : A;
+		} else if (pattern == 23) {
+			float sw = sin(lon * 3.0 + lat * 6.0);
+			c = sw > 0.33 ? A : (sw > -0.33 ? B : C);
+		} else if (pattern == 24) {
+			c = p.y > 0.0 ? A : B;
+			if (abs(p.y) < 0.08) c = C;
+		} else if (pattern == 25) {
+			c = A;
+			float z = abs(p.y - 0.18 * sin(lon * 8.0));
+			if (z < 0.16) c = B;
+			if (z < 0.05) c = C;
+		} else if (pattern == 26) {
+			c = mix(A, B, p.y * 0.5 + 0.5);
+			emit = C * step(0.975, hash(floor(p * 30.0))) * 2.0;
+			rough = 0.15;
+			metal = 0.3;
+		} else if (pattern == 27) {
+			c = mod(floor((lat + PI) * 8.0 / PI), 3.0) < 1.0 ? A : (mod(floor((lat + PI) * 8.0 / PI), 3.0) < 2.0 ? B : C);
+		} else if (pattern == 28) {
+			c = A;
+			vec3 q = p * 3.0;
+			vec3 f = fract(q) - 0.5;
+			float a2 = atan(f.y, f.x);
+			float r = length(f.xy) / (0.22 + 0.1 * cos(a2 * 5.0));
+			if (r < 1.0 && abs(f.z) < 0.4) c = B;
+		} else if (pattern == 29) {
+			float n = fbm(p * 3.0 + vec3(0.0, -TIME * 0.8, 0.0));
+			c = mix(vec3(1.0, 0.85, 0.2), vec3(0.9, 0.15, 0.05), smoothstep(0.3, 0.7, n + p.y * 0.3));
+			emit = c * 0.9;
+		} else if (pattern == 30) {
+			float rib = abs(sin(lon * 4.0));
+			c = mix(vec3(0.85, 0.35, 0.05), vec3(1.0, 0.55, 0.12), rib);
+			if (p.y > 0.92) c = vec3(0.25, 0.5, 0.15);
+		} else if (pattern == 31) {
+			c = A;
+			if (abs(p.y) < 0.12) c = vec3(1.0, 0.8, 0.25);
+			if (abs(abs(p.y) - 0.3) < 0.03) c = vec3(1.0);
+			metal = 0.4;
+			rough = 0.15;
+		}
 	}
 	ALBEDO = c;
 	METALLIC = metal;

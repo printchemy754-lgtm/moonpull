@@ -70,7 +70,7 @@ func apply(new_cfg: Dictionary) -> void:
 	var hull := Custom.item("hull", cfg.get("hull", 0))
 	riding = int(hull.get("pattern", 0)) > 0
 	if riding:
-		_patterned(int(hull.pattern), hull.get("a", Color.WHITE))
+		_patterned(hull)
 		# the captain balances on top of the rolling ball, circus style
 		_captain(Vector3(0.0, BALL_R * 2.0 - 0.02, 0.0), hat, glow)
 		captain.scale = Vector3(0.6, 0.6, 0.6)
@@ -96,13 +96,15 @@ func apply(new_cfg: Dictionary) -> void:
 
 
 ## Solid patterned ball (beach ball, soccer, lava rock...): one sphere + shader.
-func _patterned(pattern: int, a: Color) -> void:
+func _patterned(hull: Dictionary) -> void:
 	if _ball_shader == null:
 		_ball_shader = load("res://shaders/ball.gdshader")
 	var m := ShaderMaterial.new()
 	m.shader = _ball_shader
-	m.set_shader_parameter("pattern", pattern)
-	m.set_shader_parameter("col_a", a)
+	m.set_shader_parameter("pattern", int(hull.pattern))
+	m.set_shader_parameter("col_a", hull.get("a", Color.WHITE))
+	m.set_shader_parameter("col_b", hull.get("b", Color.BLACK))
+	m.set_shader_parameter("col_c", hull.get("c", Color.WHITE))
 	m.next_pass = Toon.outline_mat(0.022)
 	var sp := SphereMesh.new()
 	sp.radius = BALL_R

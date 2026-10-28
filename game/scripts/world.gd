@@ -103,7 +103,11 @@ const ZONE_LOOKS := {
 }
 
 
+var _level := 1
+
+
 func build_level(data: Dictionary, level: int, wall_left := "canyon", wall_right := "harbor") -> void:
+	_level = level
 	for c in level_root.get_children():
 		c.queue_free()
 	ambient = null
@@ -117,6 +121,7 @@ func build_level(data: Dictionary, level: int, wall_left := "canyon", wall_right
 	_platforms.clear()
 	_built_d = 0.0
 	theme = Themes.for_level(level)
+	_sky_override(theme, Save.equipped("sky"))
 	_base_theme = theme.duplicate()
 	_zone = ""
 	zone_fx = null
@@ -342,7 +347,7 @@ func _build_track_chunk(d0: float, d1: float) -> Node3D:
 					_quad(sidef, pb, pa, pa + dn0, pb + dn0)
 				else:
 					_quad(sidef, pa, pb, pb + dn0, pa + dn0)
-				var inset := -sg * 0.14
+				var inset := -sg * 0.3
 				var st: SurfaceTool = glow if outer else danger
 				_quad(st, track.point(d, e0, 0.02), track.point(d, e0 + inset, 0.02), track.point(dn, e1 + inset, 0.02), track.point(dn, e1, 0.02))
 				if outer and track.rails_at(d):
@@ -357,12 +362,18 @@ func _build_track_chunk(d0: float, d1: float) -> Node3D:
 		_zone_props(holder, d0, d1, zn)
 	if not _mats.has("track_side_m"):
 		var sm := StandardMaterial3D.new()
-		sm.albedo_color = theme.get("metal", Color("3a3f6a")).darkened(0.35)
+		sm.albedo_color = theme.get("track", theme.get("metal", Color("3a3f6a"))).darkened(0.35)
 		sm.cull_mode = BaseMaterial3D.CULL_DISABLED
 		_mats["track_side_m"] = sm
+		# solid cartoon edges: coloured rim on the sides, red around holes
 		for k in ["track_edge", "track_danger"]:
-			var fm := _fx_mat(k, Color(theme.get("neon2" if k == "track_edge" else "neon", Color.WHITE), 1.0), 3.0)
+			var fm := StandardMaterial3D.new()
+			fm.albedo_color = theme.get("edge", Color("9b4dff")) if k == "track_edge" else Color("ff3d3d")
+			fm.emission_enabled = true
+			fm.emission = fm.albedo_color * 0.35
+			fm.roughness = 0.6
 			fm.cull_mode = BaseMaterial3D.CULL_DISABLED
+			_mats[k] = fm
 	_commit_st(holder, sidef, _mats["track_side_m"])
 	_commit_st(holder, glow, _mats["track_edge"])
 	_commit_st(holder, danger, _mats["track_danger"])
@@ -548,7 +559,7 @@ func _get_track_mat() -> ShaderMaterial:
 	if _track_mat == null:
 		_track_mat = ShaderMaterial.new()
 		_track_mat.shader = load("res://shaders/track.gdshader")
-	_track_mat.set_shader_parameter("base_color", theme.get("metal", Color("3a3f6a")).darkened(0.65))
+	_track_mat.set_shader_parameter("base_color", theme.get("track", theme.get("metal", Color("3a3f6a")).darkened(0.65)))
 	_track_mat.set_shader_parameter("grid_color", theme.get("grid", Color("ff2fd0")))
 	_track_mat.set_shader_parameter("lane_color", theme.get("edge", Color("00e5ff")))
 	return _track_mat
@@ -638,7 +649,7 @@ func _setup_environment() -> void:
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.fog_enabled = true
 	env.glow_enabled = true
-	env.glow_intensity = 0.7
+	env.glow_intensity = 0.3
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
@@ -1190,6 +1201,28 @@ func _spawn_drone() -> void:
 
 
 # ------------------------------------------------------------------ portal worlds
+
+## Wallpaper from the shop: replaces the sky colours (0 = the world's own sky).
+func _sky_override(th: Dictionary, i: int) -> void:
+	if i <= 0:
+		return
+	var w := Custom.item("sky", i)
+	if not w.has("top"):
+		return
+	th["sky_top"] = w.top
+	th["sky_horizon"] = w.horizon
+	th["fog"] = w.fog
+
+
+func preview_sky(i: int) -> void:
+	var lv_theme: Dictionary = Themes.for_level(_level).duplicate()
+	_sky_override(lv_theme, i)
+	theme = lv_theme
+	_base_theme = theme.duplicate()
+	_apply_theme()
+	if _track_mat:
+		_get_track_mat()
+
 
 ## "" = back to the level's own world.
 func set_zone(z: String) -> void:

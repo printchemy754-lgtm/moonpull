@@ -98,6 +98,13 @@ static func special_for(level: int) -> String:
 	return "normal"
 
 
+## Levels that get the red HARD LEVEL warning sign.
+static func is_hard(level: int) -> bool:
+	if special_for(level) == "boss":
+		return true
+	return level >= 7 and course_for(level) in ["HAMMER ALLEY", "MINE FIELD", "SNAKE BRIDGES", "TWIN TROUBLE", "SKY OBBY"]
+
+
 ## The level's course (its character). Levels 1-2 and boss / rush levels are classic.
 static func course_for(level: int) -> String:
 	if level <= 2 or special_for(level) == "rush":

@@ -379,16 +379,16 @@ func add_xp(n: int) -> void:
 
 # ------------------------------------------------------------------ mystery box
 
-const MYSTERY_PRICE := 9000
+const MYSTERY_PRICE := 25000
 
 
 ## Unowned items a mystery box can give (no exclusives, nothing too pricey).
 func mystery_pool() -> Array:
 	var out := []
-	for cat in Custom.CATS:
+	for cat in Custom.SHOP_CATS:
 		for i in Custom.count(cat):
 			var price := int(Custom.item(cat, i).price)
-			if price > 0 and price <= 40000 and not owns(cat, i):
+			if price > 0 and price <= 150000 and not owns(cat, i):
 				out.append([cat, i, price])
 	return out
 

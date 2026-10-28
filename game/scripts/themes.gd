@@ -77,7 +77,36 @@ static func all() -> Array:
 			"moon": Color("ffe2c4"), "particles": "embers", "fall": Color("ff7a2f"), "fall_glow": 2.5,
 		},
 	]
+	# bright cartoon look (Going Balls-like): daytime skies, solid colourful tracks
+	for i in _cache.size():
+		var th: Dictionary = _cache[i]
+		for k in BRIGHT[i]:
+			th[k] = BRIGHT[i][k]
 	return _cache
+
+
+const BRIGHT := [
+	{"name": "Sunny Bay", "sky_top": Color("2f8cff"), "sky_horizon": Color("c8ecff"), "fog": Color("b8e2ff"), "fog_density": 0.0022,
+		"ambient": 0.75, "sun": Color("fff6e0"), "sun_energy": 1.0, "track": Color("3a6cf0"), "grid": Color("2550c8"), "edge": Color("9b4dff"),
+		"metal": Color("6a7ab0"), "neon": Color("ff5ea8"), "neon2": Color("ffd23f"), "rock": Color("5a6fb0"), "rock_tip": Color("ffd23f"), "tip_glow": 0.8,
+		"walls": [Color("e8c890"), Color("d8b070"), Color("f0d8a8"), Color("c89a60")], "moon": Color("ffffff"), "particles": ""},
+	{"name": "Candy Canyon", "sky_top": Color("ff8ad0"), "sky_horizon": Color("fff0fa"), "fog": Color("ffd0ea"), "fog_density": 0.0022,
+		"ambient": 0.75, "sun": Color("fff0f6"), "sun_energy": 1.0, "track": Color("ff6fb5"), "grid": Color("e8559c"), "edge": Color("ffd23f"),
+		"metal": Color("b06a9a"), "neon": Color("3fd6ff"), "neon2": Color("ffffff"), "rock": Color("c05a90"), "rock_tip": Color("3fd6ff"), "tip_glow": 0.8,
+		"walls": [Color("ffd0e8"), Color("ffb0d8"), Color("fff0f8"), Color("e890c0")], "moon": Color("ffffff"), "particles": ""},
+	{"name": "Jungle Valley", "sky_top": Color("4fb8ff"), "sky_horizon": Color("e6fff0"), "fog": Color("c8f0dc"), "fog_density": 0.0022,
+		"ambient": 0.75, "sun": Color("fffbe0"), "sun_energy": 1.0, "track": Color("3cc34a"), "grid": Color("2fa23a"), "edge": Color("ff9a2e"),
+		"metal": Color("6a8a5a"), "neon": Color("ffd23f"), "neon2": Color("ff5e3a"), "rock": Color("5a7a4a"), "rock_tip": Color("ffd23f"), "tip_glow": 0.8,
+		"walls": [Color("8ac860"), Color("6aa848"), Color("a8d878"), Color("508a38")], "moon": Color("ffffff"), "particles": ""},
+	{"name": "Frost Peak", "sky_top": Color("5aaeff"), "sky_horizon": Color("ffffff"), "fog": Color("dff2ff"), "fog_density": 0.00225,
+		"ambient": 0.8, "sun": Color("ffffff"), "sun_energy": 1.0, "track": Color("4fc8ff"), "grid": Color("36a8e0"), "edge": Color("4f5cff"),
+		"metal": Color("8aa8c8"), "neon": Color("ff6fb5"), "neon2": Color("ffffff"), "rock": Color("7a9ac0"), "rock_tip": Color("ffffff"), "tip_glow": 0.6,
+		"walls": [Color("ffffff"), Color("e0f0ff"), Color("c8e4ff"), Color("f0f8ff")], "moon": Color("ffffff"), "particles": "snow"},
+	{"name": "Desert Forge", "sky_top": Color("ff9a4a"), "sky_horizon": Color("fff0c8"), "fog": Color("ffd8a0"), "fog_density": 0.0022,
+		"ambient": 0.75, "sun": Color("fff0d0"), "sun_energy": 1.0, "track": Color("ff7a3d"), "grid": Color("e05a20"), "edge": Color("7a3cff"),
+		"metal": Color("a87a5a"), "neon": Color("3fd6ff"), "neon2": Color("ffd23f"), "rock": Color("9a6a4a"), "rock_tip": Color("ffd23f"), "tip_glow": 0.8,
+		"walls": [Color("e8a060"), Color("d08048"), Color("f0c088"), Color("b86a38")], "moon": Color("fff6e0"), "particles": ""},
+]
 
 
 static func world_index(level: int) -> int:
