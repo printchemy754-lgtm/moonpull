@@ -173,6 +173,9 @@ func _ready() -> void:
 	ui.upgrade_buy.connect(_on_upgrade_buy)
 	ui.season_pressed.connect(_on_season)
 	ui.endless_pressed.connect(_start_endless)
+	ui.play_pressed.connect(func():
+		if state == State.MENU:
+			_start_run())
 	ui.share_pressed.connect(_on_share)
 	ui.mystery_open.connect(_on_mystery)
 	ui.shop_action.connect(_on_shop_action)
@@ -585,7 +588,7 @@ func _update_camera(delta: float) -> void:
 		"menu":
 			var a := t * 0.15
 			pos = bp + sd * (3.6 + sin(a) * 0.5) + Vector3.UP * 1.9 + fwd * (4.2 + cos(a) * 0.5)
-			look = bp + Vector3.UP * 0.8 + fwd * 0.4
+			look = bp - Vector3.UP * 1.6 + fwd * 0.4   # ball sits high on screen, under the logo
 			fov = 62.0
 			rate = 3.0
 		"shop":

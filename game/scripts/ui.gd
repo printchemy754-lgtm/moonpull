@@ -14,6 +14,7 @@ signal shop_action
 signal shop_side(slot: String)
 signal rank_closed
 signal endless_pressed
+signal play_pressed
 signal share_pressed
 signal mystery_open
 signal toggle_changed(setting: String, value: bool)
@@ -93,6 +94,7 @@ var level_nodes: Array[PanelContainer] = []
 var stars_label: Label
 var menu_hint: Label
 var free_btn: Button
+var play_btn: Button
 var profile_btn: Button
 var tasks_btn: Button
 var chest_btn: Button
@@ -638,128 +640,166 @@ func set_side_text(b: Button, text: String) -> void:
 func _build_menu() -> void:
 	menu = _full(Control.new())
 	root.add_child(menu)
-	# top-left: profile + settings
-	profile_btn = _button("Captain", Color(0.08, 0.07, 0.2, 0.75), "user", Vector2(300, 76), 28)
-	_place(profile_btn, Control.PRESET_TOP_LEFT, 24, top + 6, 324, top + 82)
+
+	# ---- top bar: profile + rank (left), coins + stars (right), settings
+	profile_btn = _button("Captain", Color(0.08, 0.07, 0.2, 0.75), "user", Vector2(250, 66), 26)
+	_place(profile_btn, Control.PRESET_TOP_LEFT, 20, top + 10, 270, top + 76)
 	profile_btn.pressed.connect(func():
 		name_edit.text = Save.player_name
 		_pop(profile_panel))
 	menu.add_child(profile_btn)
-	rank_label = _label("RANK 1", 22, GOLD, 6)
+	var gear := _round_button("gear", Color(0.08, 0.07, 0.2, 0.75), 66.0)
+	_place(gear, Control.PRESET_TOP_LEFT, 280, top + 10, 346, top + 76)
+	gear.pressed.connect(func(): settings_pressed.emit())
+	menu.add_child(gear)
+	rank_label = _label("RANK 1", 20, GOLD, 5)
 	rank_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	_place(rank_label, Control.PRESET_TOP_LEFT, 30, top + 84, 330, top + 110)
+	_place(rank_label, Control.PRESET_TOP_LEFT, 26, top + 82, 346, top + 106)
 	menu.add_child(rank_label)
 	rank_bar = ProgressBar.new()
 	rank_bar.show_percentage = false
 	rank_bar.max_value = 1.0
 	rank_bar.step = 0.0
 	rank_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var rbg := _style(Color(0.08, 0.07, 0.2, 0.75), 10, 0)
+	var rbg := _style(Color(0.08, 0.07, 0.2, 0.75), 8, 0)
 	rbg.content_margin_left = 0
 	rbg.content_margin_right = 0
-	rbg.border_width_left = 3
-	rbg.border_width_right = 3
-	rbg.border_width_top = 3
-	rbg.border_width_bottom = 3
+	rbg.border_width_left = 2
+	rbg.border_width_right = 2
+	rbg.border_width_top = 2
+	rbg.border_width_bottom = 2
 	rbg.border_color = Toon.INK
-	var rfill := _style(GOLD, 8, 0)
+	var rfill := _style(GOLD, 6, 0)
 	rfill.content_margin_left = 0
 	rfill.content_margin_right = 0
 	rank_bar.add_theme_stylebox_override("background", rbg)
 	rank_bar.add_theme_stylebox_override("fill", rfill)
-	_place(rank_bar, Control.PRESET_TOP_LEFT, 28, top + 112, 324, top + 132)
+	_place(rank_bar, Control.PRESET_TOP_LEFT, 24, top + 108, 346, top + 122)
 	menu.add_child(rank_bar)
-	var gear := _round_button("gear", Color(0.08, 0.07, 0.2, 0.7), 76.0)
-	_place(gear, Control.PRESET_TOP_LEFT, 24, top + 142, 100, top + 218)
-	gear.pressed.connect(func(): settings_pressed.emit())
-	menu.add_child(gear)
 	var stars := _pill("star", GOLD)
 	var stars_pill: Control = stars[0]
 	stars_label = stars[1]
-	_place(stars_pill, Control.PRESET_TOP_RIGHT, -260, top + 88, -24, top + 154)
+	_place(stars_pill, Control.PRESET_TOP_RIGHT, -260, top + 84, -24, top + 150)
 	stars_pill.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	menu.add_child(stars_pill)
 
+	# ---- compact logo (just the word) under the top bar
 	logo = TextureRect.new()
-	logo.texture = load("res://logo.svg")
+	logo.texture = load("res://logo_wordmark.svg")
 	logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	logo.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_place(logo, Control.PRESET_CENTER_TOP, -300, top + 170, 300, top + 550)
-	logo.pivot_offset = Vector2(300, 190)
+	_place(logo, Control.PRESET_CENTER_TOP, -260, top + 168, 260, top + 268)
+	logo.pivot_offset = Vector2(260, 50)
 	menu.add_child(logo)
-	var breathe := logo.create_tween().set_loops()
-	breathe.tween_property(logo, "scale", Vector2(1.03, 1.03), 1.4).set_trans(Tween.TRANS_SINE)
-	breathe.tween_property(logo, "scale", Vector2.ONE, 1.4).set_trans(Tween.TRANS_SINE)
 
-	world_label = _label("WORLD 1 · SUNSET CANYON", 30, GOLD, 8)
-	_place(world_label, Control.PRESET_TOP_WIDE, 0, top + 560, 0, top + 606)
-	menu.add_child(world_label)
+	# ---- centre: world / level card + big PLAY button + ENDLESS
+	var col := VBoxContainer.new()
+	col.alignment = BoxContainer.ALIGNMENT_END   # tall phones: free space under the logo shows your ball
+	col.add_theme_constant_override("separation", 22)
+	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_place(col, Control.PRESET_FULL_RECT, 40, top + 290, -40, -BOTTOM_SAFE - 150)
+	menu.add_child(col)
+
+	var card := PanelContainer.new()
+	var csb := _style(Color(0.06, 0.05, 0.17, 0.82), 32, 0)
+	csb.set_content_margin_all(22)
+	csb.border_width_left = 3
+	csb.border_width_right = 3
+	csb.border_width_top = 3
+	csb.border_width_bottom = 3
+	csb.border_color = Color(0.0, 0.9, 1.0, 0.55)
+	card.add_theme_stylebox_override("panel", csb)
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col.add_child(card)
+	var cv := VBoxContainer.new()
+	cv.add_theme_constant_override("separation", 14)
+	cv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_child(cv)
+	world_label = _label("WORLD 1 · NEON BAY", 34, GOLD, 8)
+	cv.add_child(world_label)
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	row.add_theme_constant_override("separation", 18)
-	_place(row, Control.PRESET_TOP_WIDE, 0, top + 614, 0, top + 690)
+	row.add_theme_constant_override("separation", 22)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	menu.add_child(row)
+	cv.add_child(row)
 	for i in Themes.LEVELS_PER_WORLD:
 		var node := PanelContainer.new()
-		node.custom_minimum_size = Vector2(66, 66)
+		node.custom_minimum_size = Vector2(72, 72)
 		node.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var l := _label(str(i + 1), 32, Color.WHITE, 6)
 		node.add_child(l)
 		row.add_child(node)
 		level_nodes.append(node)
+	menu_hint = _label("CLASSIC RUN", 30, Color.WHITE, 8)
+	cv.add_child(menu_hint)
 
-	# side buttons, Going-Balls style
-	tasks_btn = _side_button("task", "TASKS", Color("2fbf71"), 110.0)
-	_place(tasks_btn, Control.PRESET_TOP_LEFT, 22, top + 700, 132, top + 810)
-	tasks_btn.pressed.connect(func(): tasks_pressed.emit())
-	menu.add_child(tasks_btn)
-	chest_btn = _side_button("chest", "CHEST", Color("e0902f"), 110.0)
-	chest_btn.get_meta("icon").color = GOLD
-	_place(chest_btn, Control.PRESET_TOP_LEFT, 22, top + 822, 132, top + 932)
-	chest_btn.pressed.connect(func(): chest_pressed.emit())
-	menu.add_child(chest_btn)
-	race_btn = _side_button("trophy", "RACE", Color("ff5a4e"), 110.0)
-	race_btn.get_meta("icon").color = GOLD
-	_place(race_btn, Control.PRESET_TOP_RIGHT, -132, top + 700, -22, top + 810)
-	race_btn.pressed.connect(func(): race_pressed.emit())
-	menu.add_child(race_btn)
-	var pulse := race_btn.create_tween().set_loops()
-	pulse.tween_property(race_btn, "scale", Vector2(1.07, 1.07), 0.6).set_trans(Tween.TRANS_SINE)
-	pulse.tween_property(race_btn, "scale", Vector2.ONE, 0.6).set_trans(Tween.TRANS_SINE)
-	var boats := _side_button("ball", "BALL", ORANGE, 110.0)
-	_place(boats, Control.PRESET_TOP_RIGHT, -132, top + 822, -22, top + 932)
-	boats.pressed.connect(func(): boats_pressed.emit())
-	menu.add_child(boats)
-	power_btn = _side_button("bolt", "POWER", PURPLE, 110.0)
-	power_btn.get_meta("icon").color = GOLD
-	_place(power_btn, Control.PRESET_TOP_LEFT, 22, top + 944, 132, top + 1054)
-	power_btn.pressed.connect(func(): upgrades_pressed.emit())
-	menu.add_child(power_btn)
+	play_btn = _button("PLAY", GREEN, "play", Vector2(560, 150), 64)
+	play_btn.pressed.connect(func(): play_pressed.emit())
+	col.add_child(_center(play_btn))
+	var beat := play_btn.create_tween().set_loops()
+	beat.tween_property(play_btn, "scale", Vector2(1.04, 1.04), 0.7).set_trans(Tween.TRANS_SINE)
+	beat.tween_property(play_btn, "scale", Vector2.ONE, 0.7).set_trans(Tween.TRANS_SINE)
 
-	menu_hint = _label("TAP TO ROLL\nSLIDE TO STEER", 36, Color.WHITE, 12)
-	_place(menu_hint, Control.PRESET_TOP_WIDE, 150, top + 704, -150, top + 800)
-	menu.add_child(menu_hint)
-	var tw := menu_hint.create_tween().set_loops()
-	tw.tween_property(menu_hint, "modulate:a", 0.35, 0.7)
-	tw.tween_property(menu_hint, "modulate:a", 1.0, 0.7)
-
-	endless_btn = _button("ENDLESS", Color("ff7a2f"), "wave", Vector2(300, 84), 34)
-	_place(endless_btn, Control.PRESET_CENTER_TOP, -150, top + 800, 150, top + 884)
+	var row2 := HBoxContainer.new()
+	row2.alignment = BoxContainer.ALIGNMENT_CENTER
+	row2.add_theme_constant_override("separation", 20)
+	row2.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col.add_child(row2)
+	var ev := VBoxContainer.new()
+	ev.add_theme_constant_override("separation", 2)
+	ev.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row2.add_child(ev)
+	endless_btn = _button("ENDLESS", Color("ff7a2f"), "wave", Vector2(270, 84), 32)
 	endless_btn.pressed.connect(func(): endless_pressed.emit())
-	menu.add_child(endless_btn)
-	var glow := endless_btn.create_tween().set_loops()
-	glow.tween_property(endless_btn, "modulate", Color(1.15, 1.1, 1.0), 0.7).set_trans(Tween.TRANS_SINE)
-	glow.tween_property(endless_btn, "modulate", Color.WHITE, 0.7).set_trans(Tween.TRANS_SINE)
-	endless_best = _label("BEST 0", 24, GOLD, 6)
-	_place(endless_best, Control.PRESET_CENTER_TOP, -150, top + 884, 150, top + 912)
-	menu.add_child(endless_best)
-
-	free_btn = _button("+500", PURPLE, "ad", Vector2(300, 100))
-	_place(free_btn, Control.PRESET_CENTER_BOTTOM, -150, -BOTTOM_SAFE - 110, 150, -BOTTOM_SAFE - 10)
+	ev.add_child(endless_btn)
+	endless_best = _label("BEST 0", 22, GOLD, 6)
+	ev.add_child(endless_best)
+	var fv := VBoxContainer.new()
+	fv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row2.add_child(fv)
+	free_btn = _button("+500", PURPLE, "ad", Vector2(250, 84), 32)
 	free_btn.pressed.connect(func(): free_pressed.emit())
-	menu.add_child(free_btn)
+	fv.add_child(free_btn)
+	fv.add_child(_label("FREE COINS", 22, Color("cfe9ff"), 6))
+
+	# ---- bottom navigation bar: everything else lives here
+	var nav := PanelContainer.new()
+	var nsb := _style(Color(0.05, 0.04, 0.14, 0.9), 34, 0)
+	nsb.content_margin_left = 14
+	nsb.content_margin_right = 14
+	nsb.content_margin_top = 10
+	nsb.content_margin_bottom = 10
+	nsb.border_width_top = 3
+	nsb.border_width_left = 3
+	nsb.border_width_right = 3
+	nsb.border_width_bottom = 3
+	nsb.border_color = Color(0.0, 0.9, 1.0, 0.35)
+	nav.add_theme_stylebox_override("panel", nsb)
+	_place(nav, Control.PRESET_BOTTOM_WIDE, 16, -BOTTOM_SAFE - 136, -16, -BOTTOM_SAFE - 6)
+	menu.add_child(nav)
+	var bar := HBoxContainer.new()
+	bar.alignment = BoxContainer.ALIGNMENT_CENTER
+	bar.add_theme_constant_override("separation", 14)
+	nav.add_child(bar)
+	tasks_btn = _side_button("task", "TASKS", Color("2fbf71"), 104.0)
+	tasks_btn.pressed.connect(func(): tasks_pressed.emit())
+	bar.add_child(tasks_btn)
+	chest_btn = _side_button("chest", "CHEST", Color("e0902f"), 104.0)
+	chest_btn.get_meta("icon").color = GOLD
+	chest_btn.pressed.connect(func(): chest_pressed.emit())
+	bar.add_child(chest_btn)
+	var boats := _side_button("ball", "BALL", ORANGE, 104.0)
+	boats.pressed.connect(func(): boats_pressed.emit())
+	bar.add_child(boats)
+	power_btn = _side_button("bolt", "POWER", PURPLE, 104.0)
+	power_btn.get_meta("icon").color = GOLD
+	power_btn.pressed.connect(func(): upgrades_pressed.emit())
+	bar.add_child(power_btn)
+	race_btn = _side_button("trophy", "RACE", Color("ff5a4e"), 104.0)
+	race_btn.get_meta("icon").color = GOLD
+	race_btn.pressed.connect(func(): race_pressed.emit())
+	bar.add_child(race_btn)
 
 
 # ---------------------------------------------------------------- profile
@@ -1644,8 +1684,9 @@ func show_menu(level: int, coins: int, world_name: String, world_no: int, step: 
 			tw.tween_property(node, "scale", Vector2(1.15, 1.15), 0.35)
 			tw.tween_property(node, "scale", Vector2.ONE, 0.35)
 	var sp := LevelGen.special_for(level)
-	menu_hint.text = "BOSS FIGHT!\nTAP TO ROLL" if sp == "boss" else ("VAULT HEIST!\nTAP TO ROLL" if sp == "rush" else "TAP TO ROLL\nSLIDE TO STEER")
-	menu_hint.label_settings.font_color = Color("ff6be0") if sp == "boss" else (GOLD if sp == "rush" else Color.WHITE)
+	menu_hint.text = "BOSS FIGHT!" if sp == "boss" else ("VAULT HEIST!" if sp == "rush" else LevelGen.course_for(level))
+	menu_hint.label_settings.font_color = Color("ff6be0") if sp == "boss" else (GOLD if sp == "rush" else Color("7dfcff"))
+	_set_btn_text(play_btn, "PLAY  %d" % level)
 	logo.modulate.a = 0.0
 	logo.create_tween().tween_property(logo, "modulate:a", 1.0, 0.5)
 

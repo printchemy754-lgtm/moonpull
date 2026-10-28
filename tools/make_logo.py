@@ -101,6 +101,17 @@ def logo_svg(W=1200, H=760, with_bg=False):
 </svg>'''
 
 
+def wordmark_svg(W=1200, H=230):
+    """Just the MOONPULL letters (compact header logo for the main menu)."""
+    letters = word("MOONPULL", 168, W / 2, 175, spacing=4)
+    moon, pull = letters[:4], letters[4:]
+    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}">
+{DEFS}
+{letters_svg(moon, lambda i: "url(#cy)", CYAN)}
+{letters_svg(pull, lambda i: "url(#mg)", MAGENTA)}
+</svg>'''
+
+
 def icon_svg():
     return f'''<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
 {DEFS}
@@ -131,6 +142,7 @@ def write(name, svg, png=None, size=None):
 
 
 write("game/logo.svg", logo_svg())
+write("game/logo_wordmark.svg", wordmark_svg())
 write("game/icon.svg", icon_svg(), "store/icon-512.png", (512, 512))
 write("store/logo.svg", logo_svg(), "store/logo.png", (1200, 760))
 write("store/feature-graphic.svg", feature_svg(), "store/feature-graphic-1024x500.png", (1024, 500))
