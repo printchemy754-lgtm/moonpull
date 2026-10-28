@@ -23,6 +23,8 @@ var _tag: Label3D
 var _ring: MeshInstance3D
 var _target_z := 0.0
 var _target_water := 0.0
+var _boost := 0.0
+var pace := 1.0             # each AI rolls at its own pace
 var air_t := -1.0
 
 
@@ -31,6 +33,7 @@ func setup(rname: String, cfg: Dictionary, x: float, remote := false) -> void:
 	lane_x = x
 	self.x = x
 	is_remote = remote
+	pace = randf_range(1.0, 1.12)
 	boat = Boat.new()
 	add_child(boat)
 	boat.apply(cfg)
@@ -81,7 +84,9 @@ func simulate(delta: float, items: Array, run_t: float, speed: float, rise: floa
 	var nx := move_toward(x, _target_x, 7.0 * delta)
 	vel = (nx - x) / maxf(delta, 0.001)
 	x = nx
-	var dz := speed * delta
+	_boost = maxf(_boost - delta, 0.0)
+	var slope := clampf(1.0 - LevelGen.track.slope(z) * 1.2, 0.8, 1.35) if LevelGen.track else 1.0
+	var dz := speed * pace * slope * delta * (LevelGen.BOOST_MULT if _boost > 0.0 else 1.0)
 	z += dz
 	boat.roll(dz, vel * delta)
 	if air_t >= 0.0:
@@ -93,6 +98,9 @@ func simulate(delta: float, items: Array, run_t: float, speed: float, rise: floa
 		for e in items:
 			if float(e.z) > z + 2.0:
 				break
+			if e.kind == "speedpad" and float(e.z) <= z and not e.has("rival_%d" % get_instance_id()):
+				e["rival_%d" % get_instance_id()] = true
+				_boost = LevelGen.BOOST_TIME
 			if e.kind == "ramp" and float(e.z) <= z and not e.has("rival_%d" % get_instance_id()):
 				e["rival_%d" % get_instance_id()] = true
 				air_t = 0.0

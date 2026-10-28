@@ -32,15 +32,15 @@ var grounded := true
 var doomed := false         # fell below the floor: no landing any more
 var fall_t := 0.0
 var last_cp := 2.0          # distance of the last checkpoint passed
-var crystals_run := 0
-var key_run := false
-var pins_run := 0
 var twin_ranges: Array = []  # [[z_in, z_out], ...] where the ball is split in two
 var twin_boat: Boat
 var in_twin := false
 var portal_zones: Array = [] # [[z, zone], ...]
 var zone := ""
 var course := "CLASSIC RUN"
+var pins_z := -1.0          # bowling pins after the finish
+var pins_down := 0
+var pins_hit := false
 const COURSE_TEXT := {
 	"CLASSIC RUN": "Roll, steer, grab the coins!",
 	"HAMMER ALLEY": "Giant hammers swing across the track!",
@@ -50,6 +50,9 @@ const COURSE_TEXT := {
 	"PORTAL STORM": "Portals to other worlds + mystery boxes!",
 	"ROLLER COASTER": "Big drops and crazy speed!",
 	"MINE FIELD": "Mines, blocks and sweepers everywhere!",
+	"BLOCK DROP": "Blocks fall from the sky. Find the gap!",
+	"THREE LANES": "Pick a lane - one hides a secret chest!",
+	"SKY OBBY": "Platforms and jumps high in the sky!",
 }
 var steer_target := 0.0     # where the finger wants the boat
 var boat_xvel := 0.0
@@ -271,12 +274,18 @@ func _unhandled_input(event: InputEvent) -> void:
 func _start_run() -> void:
 	state = State.PLAYING
 	cam_mode = "chase"
+	if mode == "levels":
+		# sky drop: the ball falls onto the track from above
+		ball_y = 9.0
+		ball_vy = 0.0
+		grounded = false
+		Sfx.play("power", 0.8)
 	ui.show_hud(level)
 	_run_perks()
 	if special == "boss":
 		ui.special_banner("BOSS FIGHT", "Pass obstacles to blast the mothership!", Color("ff4fd8"))
 	elif special == "rush":
-		ui.special_banner("COIN RUSH", "Bonus level: grab every coin!", Color("ffd166"))
+		ui.special_banner("VAULT HEIST", "Grab every coin before the security drone catches up!", Color("ffd166"))
 	elif mode == "levels" and level > 2:
 		ui.special_banner(course, String(COURSE_TEXT.get(course, "")), Color("7dfcff"))
 	Analytics.event("level_start", {"level_name": "level_%d" % level, "level": level})
@@ -359,12 +368,25 @@ func _process(delta: float) -> void:
 				ui.set_countdown(0)
 				state = State.PLAYING
 		State.WON:
+			# roll on into the bowling pins
 			factor = 0.5
-			var dw := speed * 0.35 * delta
+			var before_pins := pins_z > 0.0 and not pins_hit
+			var dw := speed * (0.85 if before_pins else 0.3) * delta
 			boat_z = minf(boat_z + dw, world.track.length - 2.0)
-			boat_x = lerpf(boat_x, 0.0, 1.0 - exp(-2.0 * delta))
+			if not before_pins:
+				boat_x = lerpf(boat_x, 0.0, 1.0 - exp(-1.5 * delta))
 			boat.roll(dw, 0.0)
 			ball_y = 0.0
+			if before_pins and boat_z >= pins_z - 0.6:
+				pins_hit = true
+				world.knock_pins(pins_down, boat_x)
+				shake = 0.35 if pins_down == 10 else 0.15
+				Sfx.play("crash", 1.4)
+				Sfx.vibrate(50)
+				if pins_down == 10:
+					ui.popup("STRIKE!  +%d" % _pin_bonus(), Color("ffd166"))
+				else:
+					ui.popup("%d PINS  +%d" % [pins_down, _pin_bonus()], Color("7dfcff"))
 
 	var playing := state == State.PLAYING or state == State.COUNTDOWN
 	if playing != _cg_playing:
@@ -466,7 +488,8 @@ func _update_twin_zone() -> void:
 		zone = z
 		world.set_zone(z)
 		if entering:
-			ui.popup("WELCOME TO %s!" % z, Color("7dfcff"))
+			ui.popup("%s!" % z, Color("7dfcff"))
+			_mission("portal")
 			Sfx.play("boost", 0.9)
 			Sfx.vibrate(40)
 			shake = 0.2
@@ -651,7 +674,7 @@ func _check_items() -> void:
 			if not e.taken:
 				_take_current(e)
 		elif e.kind == "ramp":
-			if not e.taken and boat_z >= float(e.z):
+			if not e.taken:
 				_take_ramp(e)
 		elif e.kind in ["portal", "twin_in", "twin_out"]:
 			continue
@@ -662,68 +685,8 @@ func _check_items() -> void:
 				Sfx.play("boost")
 				Sfx.vibrate(20)
 				ui.popup("ZOOM!", Color("ffc531"))
-		elif e.kind == "crystal":
-			if not e.taken and absf(boat_x - float(e.x)) < 0.95 and ball_y < 1.2:
-				_smash_crystal(e)
-		elif e.kind == "key":
-			if not e.taken and absf(boat_x - float(e.x)) < 1.0 and absf(ball_y + LevelGen.PICK_OFFSET - float(e.y)) < 1.3:
-				_take_key(e)
-		elif e.kind == "pins":
-			if not e.taken and boat_z >= float(e.z) - 0.6:
-				_bowl(e)
 		elif not e.taken and absf(boat_x - float(e.x)) < LevelGen.PICK_RANGE * 1.3 and ball_y < 2.0:
 			_take_pickup(e)
-
-
-## Minecraft-ish crystal blocks: roll through them, they shatter into coins.
-func _smash_crystal(e: Dictionary) -> void:
-	world.take_pickup(e)
-	world.burst_splash(boat.global_position + Vector3(0.0, 0.5, 0.0))
-	var bonus := 15 * Upgrades.coin_value()
-	run_coins += bonus
-	mission_coins += bonus
-	ui.set_coins(Save.coins + run_coins - banked)
-	crystals_run += 1
-	ui.popup("SMASH! +%d" % bonus if crystals_run < 5 else "ALL CRYSTALS! +%d" % bonus, Color("7dfcff"))
-	Sfx.play("star", 1.4 + 0.08 * crystals_run)
-	Sfx.vibrate(25)
-	shake = maxf(shake, 0.12)
-
-
-## Zelda-ish secret: one golden key hidden per level.
-func _take_key(e: Dictionary) -> void:
-	world.take_pickup(e)
-	key_run = true
-	var bonus := 150
-	run_coins += bonus
-	mission_coins += bonus
-	ui.set_coins(Save.coins + run_coins - banked)
-	var first := not Save.keys.has(str(level))
-	ui.popup("SECRET KEY FOUND! +%d" % bonus if first else "KEY! +%d" % bonus, Color("ffc531"))
-	Sfx.play("win", 1.3)
-	Sfx.vibrate(60)
-	shake = 0.25
-
-
-## Wii-Sports-ish bowling at the end of the level.
-func _bowl(e: Dictionary) -> void:
-	e.taken = true
-	var n := world.knock_pins(e, 0.0 if fever_left > 0.0 else boat_x)
-	pins_run = mini(n, 10)
-	var bonus := pins_run * 10
-	if pins_run >= 10:
-		bonus = 250
-		ui.popup("STRIKE!!  +%d" % bonus, Color("ff4fd8"))
-		Sfx.play("win", 1.1)
-		shake = 0.4
-	elif pins_run > 0:
-		ui.popup("%d PINS  +%d" % [pins_run, bonus], Color("ffd166"))
-		Sfx.play("crash", 1.6)
-	if bonus > 0:
-		run_coins += bonus
-		mission_coins += bonus
-		ui.set_coins(Save.coins + run_coins - banked)
-		Sfx.vibrate(50)
 
 
 func _check_pearls() -> void:
@@ -779,8 +742,16 @@ func _take_pickup(e: Dictionary) -> void:
 			boat.show_magnet(true)
 			Sfx.play("power")
 			ui.popup("MAGNET!", Color("ff4fd8"))
+		"chest":
+			run_coins += 150
+			mission_coins += 150
+			ui.set_coins(Save.coins + run_coins - banked)
+			ui.popup("SECRET CHEST!  +150", Color("ffd166"))
+			_mission("chest")
+			Sfx.play("star", 0.9)
+			world.burst_confetti(boat.global_position + Vector3(0.0, 1.0, 0.0))
 		"box":
-			# Mario-Kart style mystery box
+			# mystery box: a random power
 			var roll := randi() % 4
 			match roll:
 				0:
@@ -997,9 +968,27 @@ func _stars() -> int:
 	return 1
 
 
+## Finish-line bowling: the closer to the middle you cross, the more pins fall.
+func _pins_for(x: float) -> int:
+	var ax := absf(x)
+	if ax < 0.6:
+		return 10
+	return clampi(10 - int(ceil((ax - 0.6) * 3.0)), 3, 9)
+
+
+func _pin_bonus() -> int:
+	return pins_down * 10 + (150 if pins_down == 10 else 0)
+
+
 func _win() -> void:
 	state = State.WON
 	holding = false
+	pins_hit = false
+	pins_down = _pins_for(boat_x)
+	pins_z = float(data.get("pins", -1.0))
+	run_coins += _pin_bonus()
+	if pins_down == 10:
+		_mission("strike")
 	cam_mode = "win"
 	ui.hide_hint()
 	var stars := _stars()
@@ -1041,45 +1030,25 @@ func _win() -> void:
 	boost_left = 0.0
 	slow_left = 0.0
 	ui.set_effects({})
-	# Trophy Road: every win pushes you along, milestones give a Moon Drop
-	if key_run and not Save.keys.has(str(level)):
-		Save.keys.append(str(level))
-	var gain := 4 + stars * 2 + (5 if key_run else 0) + (3 if pins_run >= 10 else 0) + (2 if crystals_run >= 5 else 0)
-	var before := Save.trophies
-	Save.trophies += gain
-	var drops := Save.trophies / GameUI.TROPHY_STEP - before / GameUI.TROPHY_STEP
-	Save.save()
-	boat.dance()
-	await get_tree().create_timer(0.9).timeout
-	if state == State.WON:
-		ui.show_win(level, stars, run_coins, special)
-		ui.show_trophies(gain, Save.trophies)
-		if drops > 0:
-			await get_tree().create_timer(2.0).timeout
-			if state == State.WON:
-				ui.show_moon_drop(_moon_drop_reward, func(): ui.set_coins(Save.coins))
-
-
-## Moon Drop prize by rarity (0 = rare ... 4 = legendary).
-func _moon_drop_reward(rarity: int) -> String:
-	Save.trophy_claimed += 1
-	var coins: int = [100, 250, 500, 1000, 2500][rarity]
-	if rarity >= 2:
-		var pool := []
-		for cat in ["hull", "paint", "sail", "flag", "hat", "trail"]:
-			for i in Custom.count(cat):
-				var it := Custom.item(cat, i)
-				if not Save.owns(cat, i) and not Custom.is_exclusive(it):
-					pool.append([cat, i])
-		if not pool.is_empty():
-			var pick: Array = pool[randi() % pool.size()]
-			Save.grant(pick[0], pick[1])
-			Save.coins += coins / 2
-			Save.save()
-			return "NEW %s: %s!\n+%d COINS" % [Custom.CAT_NAMES[pick[0]], Custom.item(pick[0], pick[1]).name, coins / 2]
-	Save.coins += coins
-	Save.save()
-	return "+%d COINS!" % coins
+	# wait for the ball to bowl into the pins (max ~4 s)
+	var waited := 0.0
+	while state == State.WON and not pins_hit and pins_z > 0.0 and waited < 3.5:
+		await get_tree().create_timer(0.1).timeout
+		waited += 0.1
+	await get_tree().create_timer(1.3).timeout
+	if state != State.WON:
+		return
+	# Star Drop: tap to upgrade it, then it pays out
+	if not autotest:
+		ui.show_star_drop()
+		var prize: int = await ui.star_drop_done
+		if state != State.WON:
+			return
+		Save.add_coins(prize)
+		ui.set_coins(Save.coins)
+	else:
+		Save.add_coins(StarDrop.prize_for(StarDrop.roll_rarity(randi())))
+	ui.show_win(level, stars, run_coins, special)
 
 
 ## from_ad = the paid "continue"; false = a free life (levels mode).
@@ -1121,12 +1090,9 @@ func _respawn_at(d: float) -> void:
 	fall_t = 0.0
 	air_t = -1.0
 	for e in world.items:
-		if float(e.z) + float(e.depth) * 0.5 > d:
-			if e.kind in ["ramp", "speedpad"] or LevelGen.is_current(e.kind):
-				e.taken = false   # ramps and pads work again after a respawn
-			if not e.get("taken", false):
-				e.passed = false
-				e.min_clear = LevelGen.EDGE
+		if float(e.z) + float(e.depth) * 0.5 > d and not e.get("taken", false):
+			e.passed = false
+			e.min_clear = LevelGen.EDGE
 
 
 func _intros() -> void:
@@ -1136,11 +1102,9 @@ func _intros() -> void:
 		var dz: float = e.z - boat_z
 		if dz > 32.0:
 			return
-		var kind: String = e.kind
+		var kind: String = String(e.get("intro", e.kind))
 		if LevelGen.INTROS.has(kind) and not Save.seen.has(kind):
 			Save.mark_seen(kind)
-			if kind == "twin_in":
-				Save.mark_seen("gate2")
 			var info: Array = LevelGen.INTROS[kind]
 			ui.intro(info[0], info[1])
 			return
@@ -1214,9 +1178,6 @@ func _setup_run(new_data: Dictionary, theme_level: int) -> void:
 	doomed = false
 	fall_t = 0.0
 	last_cp = 2.0
-	crystals_run = 0
-	key_run = false
-	pins_run = 0
 	course = String(data.get("course", "CLASSIC RUN"))
 	twin_ranges.clear()
 	portal_zones.clear()
@@ -2130,7 +2091,7 @@ func _autopilot_x() -> float:
 		# grab pickups only if nothing dangerous is in between
 		var safe := true
 		for o in world.items:
-			if (LevelGen.is_obstacle(o.kind) or LevelGen.is_void(o.kind)) and not o.passed and float(o.z) + float(o.depth) * 0.5 > boat_z - 1.0 and float(o.z) - float(o.depth) * 0.5 < float(e.z) + 1.0:
+			if (LevelGen.is_obstacle(o.kind) or LevelGen.is_void(o.kind)) and not o.passed and float(o.z) > boat_z - 1.0 and float(o.z) < float(e.z) + 1.0:
 				safe = false
 		if safe:
 			return float(e.x)

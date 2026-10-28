@@ -82,6 +82,24 @@ var _chunks: Array = []          # [d_end, Node3D]
 var _built_d := 0.0
 const CHUNK_LEN := 24.0
 var _platforms: Array = []       # [void dict, Node3D]
+var zone_fx: CPUParticles3D
+var _zone := ""
+var _base_theme: Dictionary = {}
+var pins_root: Node3D
+var _pins: Array = []            # [Node3D, velocity, spin]
+var drone: Node3D
+var _drone_lights: Array[StandardMaterial3D] = []
+
+## Portal worlds: the whole sky, fog, light and track colours change.
+const ZONE_LOOKS := {
+	"SUNSET BAY": {"sky_top": Color("2b1055"), "sky_horizon": Color("ff8a3d"), "fog": Color("b0466a"), "grid": Color("ffd166"), "edge": Color("ff5e8a"), "moon": Color("ffd9a0"), "fx": "motes", "fxc": Color("ffcf7a")},
+	"DEEP GALAXY": {"sky_top": Color("000000"), "sky_horizon": Color("4b1fb5"), "fog": Color("120a3a"), "grid": Color("9b7bff"), "edge": Color("ffffff"), "moon": Color("c9b8ff"), "fx": "stars", "fxc": Color("ffffff")},
+	"CANDY LAND": {"sky_top": Color("ff7ac6"), "sky_horizon": Color("ffe0f2"), "fog": Color("ffb3dc"), "grid": Color("ffffff"), "edge": Color("6be4ff"), "moon": Color("ffffff"), "fx": "sprinkles", "fxc": Color("ffffff")},
+	"FROST PEAK": {"sky_top": Color("0a3a7a"), "sky_horizon": Color("d8f6ff"), "fog": Color("a8dcf0"), "grid": Color("ffffff"), "edge": Color("7fe0ff"), "moon": Color("ffffff"), "fx": "snow", "fxc": Color("ffffff")},
+	"LAVA CORE": {"sky_top": Color("1a0000"), "sky_horizon": Color("ff4a00"), "fog": Color("5a1000"), "grid": Color("ff7a1a"), "edge": Color("ffe14f"), "moon": Color("ff9a5a"), "fx": "embers", "fxc": Color("ff8a2a")},
+	"PIXEL WORLD": {"sky_top": Color("2f7bff"), "sky_horizon": Color("9fe8ff"), "fog": Color("78c8ff"), "grid": Color("4cff4c"), "edge": Color("ffffff"), "moon": Color("fff27a"), "fx": "cubes", "fxc": Color("4cff4c")},
+	"WILD DESERT": {"sky_top": Color("3a1a5a"), "sky_horizon": Color("ffb35a"), "fog": Color("c87a4a"), "grid": Color("ffcf7a"), "edge": Color("ff6a3a"), "moon": Color("ffe8b0"), "fx": "dust", "fxc": Color("e8b07a")},
+}
 
 
 func build_level(data: Dictionary, level: int, wall_left := "canyon", wall_right := "harbor") -> void:
@@ -98,10 +116,14 @@ func build_level(data: Dictionary, level: int, wall_left := "canyon", wall_right
 	_platforms.clear()
 	_built_d = 0.0
 	theme = Themes.for_level(level)
-	_apply_theme()
+	_base_theme = theme.duplicate()
 	_zone = ""
-	if walls:
-		walls.visible = true
+	zone_fx = null
+	_pins.clear()
+	pins_root = null
+	drone = null
+	_drone_lights.clear()
+	_apply_theme()
 	track = data.track
 	LevelGen.track = track
 	_garlands.clear()
@@ -134,6 +156,10 @@ func build_level(data: Dictionary, level: int, wall_left := "canyon", wall_right
 	endless = bool(data.get("endless", false))
 	if not endless:
 		_spawn_finish(finish_z)
+		if data.has("pins"):
+			_spawn_pins(float(data.pins))
+	if String(data.get("special", "")) == "rush":
+		_spawn_drone()
 	_wall_len = track.length
 	_wall_seed = level
 	set_walls(wall_left, wall_right)
@@ -577,22 +603,18 @@ func _spawn_item(e: Dictionary) -> void:
 			_build_checkpoint(root)
 		"hammer":
 			_build_hammer(root, e)
+		"tetro":
+			_build_tetro(root, e)
 		"portal":
-			_build_portal(root, String(e.zone))
+			_build_portal(root, e)
 		"twin_in", "twin_out":
 			_build_twin_gate(root, e.kind == "twin_in")
-		"box":
-			_build_box(root, e)
 		"speedpad":
 			_build_speedpad(root)
-		"rain":
-			_build_rain(root, e)
-		"crystal":
-			_build_crystal(root, e)
-		"key":
-			_build_key(root, e)
-		"pins":
-			_build_pins(root, e)
+		"box":
+			_build_box(root, e)
+		"chest":
+			_build_chest(root, e)
 		"ramp":
 			_build_ramp(root, e)
 		"boost", "slow":
@@ -693,248 +715,6 @@ func _build_checkpoint(root: Node3D) -> void:
 		_mi(root, pr, flagm, Vector3(fx, 3.15, 0.0), Vector3(0.0, 0.0, PI))
 
 
-## Going-Balls style pendulum hammer swinging across the track.
-func _build_hammer(root: Node3D, e: Dictionary) -> void:
-	var metal := _mat("gate_metal", theme.get("metal", Color("3a3f6a")), 0.5)
-	var neon := _mat("hammer_neon", theme.get("neon", Color("ff2fd0")), 0.2, 3.0, 0.02)
-	var top := 5.4
-	_box(root, Vector3(LevelGen.HALF_W * 2.0 + 1.4, 0.35, 0.5), Vector3(0.0, top + 0.2, 0.0), metal)
-	for sx in [-1.0, 1.0]:
-		_box(root, Vector3(0.35, top + 0.4, 0.5), Vector3(sx * (LevelGen.HALF_W + 0.55), (top + 0.4) * 0.5, 0.0), metal)
-	var arm := Node3D.new()
-	arm.position = Vector3(0.0, top, 0.0)
-	root.add_child(arm)
-	_cone(arm, 0.08, 0.08, 4.2, Vector3(0.0, -2.1, 0.0), metal, 8)
-	_cone(arm, 0.75, 0.75, 1.7, Vector3(0.0, -4.6, 0.0), _mat("hammer_head", theme.get("neon2", Color("00e5ff")).darkened(0.4), 0.4), 12, Vector3(0.0, 0.0, PI * 0.5))
-	for sx in [-0.86, 0.86]:
-		_cone(arm, 0.8, 0.8, 0.12, Vector3(sx, -4.6, 0.0), neon, 12, Vector3(0.0, 0.0, PI * 0.5))
-	e["mover"] = arm
-
-
-## Portal: a big glowing ring with a swirling disc of the new world's colours.
-func _build_portal(root: Node3D, zname: String) -> void:
-	var zc: Dictionary = ZONE_COLORS.get(zname, ZONE_COLORS["GALAXY"])
-	var spin := Node3D.new()
-	spin.position = Vector3(0.0, 3.2, 0.0)
-	root.add_child(spin)
-	_torus(spin, 3.4, 3.9, Vector3.ZERO, _mat("portal_ring_" + zname, zc.neon, 0.2, 3.5, 0.03), Vector3(PI * 0.5, 0.0, 0.0))
-	var disc := CylinderMesh.new()
-	disc.top_radius = 3.4
-	disc.bottom_radius = 3.4
-	disc.height = 0.05
-	disc.radial_segments = 32
-	disc.rings = 1
-	var dm := _fx_mat("portal_disc_" + zname, Color(zc.sky_horizon, 0.45), 2.0)
-	dm.cull_mode = BaseMaterial3D.CULL_DISABLED
-	var d := _mi(spin, disc, dm, Vector3.ZERO, Vector3(PI * 0.5, 0.0, 0.0))
-	d.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	for k in 6:
-		var a := TAU * k / 6.0
-		_box(spin, Vector3(0.5, 0.15, 0.1), Vector3(cos(a), sin(a), 0.0) * 2.4, _mat("portal_swirl_" + zname, zc.neon2, 0.2, 3.0, 0.0), Vector3(0.0, 0.0, a + 0.6))
-	var lbl := Label3D.new()
-	lbl.text = zname
-	lbl.font = load("res://fonts/Montserrat-Black.ttf")
-	lbl.font_size = 96
-	lbl.outline_size = 18
-	lbl.modulate = zc.neon2
-	lbl.pixel_size = 0.008
-	lbl.position = Vector3(0.0, 7.6, 0.0)
-	lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	root.add_child(lbl)
-	for sx in [-1.0, 1.0]:
-		_box(root, Vector3(0.5, 3.2, 0.6), Vector3(sx * 3.9, 1.0, 0.0), _mat("gate_metal", theme.get("metal", Color("3a3f6a")), 0.5))
-
-
-## Twin gates: two small rings over the lanes (split / join).
-func _build_twin_gate(root: Node3D, split: bool) -> void:
-	var col := Color("ff6be0") if split else Color("7dfcff")
-	var spin := Node3D.new()
-	root.add_child(spin)
-	for sx in [-1.8, 1.8]:
-		_torus(root, 1.15, 1.35, Vector3(sx, 1.4, 0.0), _mat("twin_ring%d" % int(split), col, 0.2, 3.5, 0.03), Vector3(PI * 0.5, 0.0, 0.0))
-	var lbl := Label3D.new()
-	lbl.text = "TWIN!" if split else "JOIN"
-	lbl.font = load("res://fonts/Montserrat-Black.ttf")
-	lbl.font_size = 80
-	lbl.outline_size = 16
-	lbl.modulate = col
-	lbl.pixel_size = 0.008
-	lbl.position = Vector3(0.0, 3.3, 0.0)
-	lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	root.add_child(lbl)
-	spin.queue_free()
-
-
-## Mystery box "?".
-func _build_box(root: Node3D, e: Dictionary) -> void:
-	var spin := Node3D.new()
-	spin.position = Vector3(e.x, e.y, 0.0)
-	root.add_child(spin)
-	var hue := _fx_mat("box_glass", Color(1.0, 0.85, 0.2, 0.55), 2.0)
-	hue.cull_mode = BaseMaterial3D.CULL_DISABLED
-	_box(spin, Vector3(0.8, 0.8, 0.8), Vector3.ZERO, hue)
-	_box(spin, Vector3(0.84, 0.08, 0.84), Vector3(0.0, 0.38, 0.0), _mat("box_edge", Color("ff6be0"), 0.2, 3.0, 0.0))
-	_box(spin, Vector3(0.84, 0.08, 0.84), Vector3(0.0, -0.38, 0.0), _mat("box_edge", Color("ff6be0"), 0.2, 3.0, 0.0))
-	for face in [Vector3(0, 0, 0.43), Vector3(0, 0, -0.43), Vector3(0.43, 0, 0), Vector3(-0.43, 0, 0)]:
-		var q := Label3D.new()
-		q.text = "?"
-		q.font = load("res://fonts/Montserrat-Black.ttf")
-		q.font_size = 90
-		q.outline_size = 12
-		q.pixel_size = 0.006
-		q.position = face
-		q.look_at_from_position(face, face * 2.0, Vector3.UP)
-		q.rotate_y(PI)
-		spin.add_child(q)
-	e["spinner"] = spin
-
-
-## Speed pad: glowing chevrons on the floor across the whole track.
-func _build_speedpad(root: Node3D) -> void:
-	var y := _mat("pad_y", Color("ffc531"), 0.2, 3.0, 0.0)
-	for k in 3:
-		for cx in [-2.4, 0.0, 2.4]:
-			var pr := PrismMesh.new()
-			pr.size = Vector3(1.6, 0.9, 0.05)
-			var ch := _mi(root, pr, y, Vector3(cx, 0.04, -0.8 + k * 0.8), Vector3(-PI * 0.5, 0.0, 0.0))
-			ch.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-
-
-## Falling Tetris-like piece + its warning shadow.
-func _build_rain(root: Node3D, e: Dictionary) -> void:
-	var v: Vector2 = e.blocks[0]
-	var cells := int(e.get("cells", 1))
-	var cw := (v.y - v.x) / cells
-	var cols := [Color("ff3d5a"), Color("ffd23f"), Color("39ff9f"), Color("4ea8ff"), Color("b14dff")]
-	var col: Color = cols[int(e.get("shape", 0)) % cols.size()]
-	var piece := Node3D.new()
-	root.add_child(piece)
-	var body := _mat("rain_%d" % int(e.get("shape", 0)), col, 0.4, 1.2, 0.04)
-	var edge := _mat("rain_edge", Color.WHITE, 0.3, 2.0, 0.0)
-	for k in cells:
-		var cx := v.x + cw * (k + 0.5)
-		var h := 1.1 if (k + int(e.get("shape", 0))) % 2 == 0 else 2.2
-		_box(piece, Vector3(cw - 0.06, h, 1.05), Vector3(cx, h * 0.5, 0.0), body)
-		_box(piece, Vector3(cw - 0.02, 0.06, 1.08), Vector3(cx, h, 0.0), edge)
-	var sh := Node3D.new()
-	root.add_child(sh)
-	var plane := PlaneMesh.new()
-	plane.size = Vector2(v.y - v.x, 1.2)
-	var sm := _mi(sh, plane, _fx_mat("rain_shadow", Color(0.0, 0.0, 0.0, 0.55)), Vector3((v.x + v.y) * 0.5, 0.03, 0.0))
-	sm.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	sh.position = Vector3.ZERO
-	e["mover"] = piece
-	e["shadow"] = sh
-
-
-## Breakable crystal block (smash it for coins).
-func _build_crystal(root: Node3D, e: Dictionary) -> void:
-	var spin := Node3D.new()
-	spin.position = Vector3(e.x, 0.45, 0.0)
-	root.add_child(spin)
-	var cm := _fx_mat("crystal_glass", Color(0.4, 0.95, 1.0, 0.6), 2.2)
-	_box(spin, Vector3(0.85, 0.85, 0.85), Vector3.ZERO, cm)
-	_box(spin, Vector3(0.4, 0.4, 0.88), Vector3(0.1, 0.1, 0.0), _mat("crystal_gem", Color("39ff9f"), 0.3, 3.0, 0.0))
-	e["spinner"] = spin
-
-
-## The secret golden key.
-func _build_key(root: Node3D, e: Dictionary) -> void:
-	var spin := Node3D.new()
-	spin.position = Vector3(e.x, e.y, 0.0)
-	root.add_child(spin)
-	var gold := _mat("key_gold", Color("ffc531"), 0.3, 2.5, 0.03)
-	_torus(spin, 0.18, 0.3, Vector3(0.0, 0.25, 0.0), gold, Vector3(PI * 0.5, 0.0, 0.0))
-	_box(spin, Vector3(0.09, 0.55, 0.09), Vector3(0.0, -0.15, 0.0), gold)
-	_box(spin, Vector3(0.2, 0.08, 0.09), Vector3(0.1, -0.35, 0.0), gold)
-	_box(spin, Vector3(0.16, 0.08, 0.09), Vector3(0.08, -0.2, 0.0), gold)
-	var halo := _fx_mat("key_halo", Color(1.0, 0.85, 0.3, 0.25), 2.0)
-	_ball(spin, 0.6, Vector3.ZERO, halo)
-	e["spinner"] = spin
-
-
-## Bowling pins (Wii-Sports-style finish bonus).
-func _build_pins(root: Node3D, e: Dictionary) -> void:
-	var white := _mat("pin_white", Color("f7f7f2"), 0.4)
-	var red := _mat("pin_red", Color("ff3d5a"), 0.4, 0.5, 0.0)
-	var nodes: Array[Node3D] = []
-	var rows := [[0.0], [-0.45, 0.45], [-0.9, 0.0, 0.9], [-1.35, -0.45, 0.45, 1.35]]
-	for r in rows.size():
-		for px in rows[r]:
-			var pin := Node3D.new()
-			pin.position = Vector3(float(px), 0.0, r * 0.55)
-			root.add_child(pin)
-			_cone(pin, 0.13, 0.08, 0.55, Vector3(0.0, 0.28, 0.0), white, 8)
-			_ball(pin, 0.11, Vector3(0.0, 0.65, 0.0), white)
-			_cone(pin, 0.085, 0.085, 0.06, Vector3(0.0, 0.5, 0.0), red, 8)
-			nodes.append(pin)
-	e["pin_nodes"] = nodes
-	var lbl := Label3D.new()
-	lbl.text = "STRIKE ZONE"
-	lbl.font = load("res://fonts/Montserrat-Black.ttf")
-	lbl.font_size = 64
-	lbl.outline_size = 14
-	lbl.modulate = Color("ffd166")
-	lbl.pixel_size = 0.008
-	lbl.position = Vector3(0.0, 2.4, 0.0)
-	lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	root.add_child(lbl)
-
-
-## Knock pins near x; returns how many fell.
-func knock_pins(e: Dictionary, x: float) -> int:
-	var n := 0
-	for pin in e.get("pin_nodes", []):
-		var p: Node3D = pin
-		if absf(p.position.x - x) < 1.25 + p.position.z * 0.15:
-			n += 1
-			var tw := create_tween().set_parallel(true)
-			var dir := signf(p.position.x - x + 0.01)
-			tw.tween_property(p, "rotation", Vector3(-1.5, 0.0, dir * 1.2), 0.35)
-			tw.tween_property(p, "position", p.position + Vector3(dir * 1.5, 0.6, 2.5), 0.35)
-	return n
-
-
-# ------------------------------------------------------------------ portal worlds
-
-const ZONE_COLORS := {
-	"SUNSET": {"sky_top": Color("2a0a3a"), "sky_horizon": Color("ff8a3d"), "fog": Color("7a2a3a"), "grid": Color("ffb347"), "edge": Color("ff3d8a"), "neon": Color("ff8a3d"), "neon2": Color("ffd23f")},
-	"GALAXY": {"sky_top": Color("02010a"), "sky_horizon": Color("6a3dff"), "fog": Color("1a0a4a"), "grid": Color("b14dff"), "edge": Color("4ea8ff"), "neon": Color("b14dff"), "neon2": Color("4ea8ff")},
-	"CANDY": {"sky_top": Color("ff9ad8"), "sky_horizon": Color("fff0a8"), "fog": Color("ffc8e8"), "grid": Color("ff4fa8"), "edge": Color("39d8ff"), "neon": Color("ff4fa8"), "neon2": Color("39d8ff")},
-	"ICE": {"sky_top": Color("0a2a55"), "sky_horizon": Color("d8f6ff"), "fog": Color("a8d8ee"), "grid": Color("ffffff"), "edge": Color("00c8ff"), "neon": Color("00c8ff"), "neon2": Color("ffffff")},
-	"LAVA": {"sky_top": Color("1a0404"), "sky_horizon": Color("ff3d00"), "fog": Color("5a1004"), "grid": Color("ff6a00"), "edge": Color("ffd23f"), "neon": Color("ff3d00"), "neon2": Color("ffd23f")},
-	"MATRIX": {"sky_top": Color("000400"), "sky_horizon": Color("0a3a0a"), "fog": Color("021a02"), "grid": Color("39ff6a"), "edge": Color("a8ff3d"), "neon": Color("39ff6a"), "neon2": Color("a8ff3d")},
-}
-var _zone := ""
-
-
-## Changes the look of the world ("" = the level's own world).
-func set_zone(zname: String) -> void:
-	if zname == _zone:
-		return
-	_zone = zname
-	var zc: Dictionary = ZONE_COLORS.get(zname, {})
-	var sky_top: Color = zc.get("sky_top", theme.get("sky_top", Color.BLACK))
-	var horizon: Color = zc.get("sky_horizon", theme.get("sky_horizon", Color.BLACK))
-	sky_mat.sky_top_color = sky_top
-	sky_mat.sky_horizon_color = horizon
-	sky_mat.ground_horizon_color = horizon
-	sky_mat.ground_bottom_color = sky_top.darkened(0.3)
-	env.fog_light_color = zc.get("fog", theme.get("fog", Color.BLACK))
-	if _track_mat:
-		_track_mat.set_shader_parameter("grid_color", zc.get("grid", theme.get("grid", Color("ff2fd0"))))
-		_track_mat.set_shader_parameter("lane_color", zc.get("edge", theme.get("edge", Color("00e5ff"))))
-	for k in ["track_edge", "track_danger"]:
-		if _mats.has(k):
-			var m: StandardMaterial3D = _mats[k]
-			var c: Color = zc.get("neon2" if k == "track_edge" else "neon", theme.get("neon2" if k == "track_edge" else "neon", Color.WHITE))
-			m.albedo_color = c
-			m.emission = c
-	moon_ring_mat.albedo_color = zc.get("neon2", theme.get("neon2", Color("00e5ff")))
-	if walls:
-		walls.visible = zname == "" or zname == "SUNSET" or zname == "MATRIX"
-
-
 ## Jump ramp: neon kicker across the whole track.
 func _build_ramp(root: Node3D, e: Dictionary) -> void:
 	var neon := _mat("ramp_neon", theme.get("neon2", Color("00e5ff")), 0.2, 3.0, 0.0)
@@ -950,6 +730,348 @@ func _build_ramp(root: Node3D, e: Dictionary) -> void:
 		var ch := _mi(root, pr, _mat("ramp_chev", theme.get("neon", Color("ff2fd0")), 0.2, 3.0, 0.0), Vector3(cx, 0.36, 0.0), Vector3(-PI * 0.5 - slope, 0.0, 0.0))
 		ch.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	e["pad"] = root
+
+
+## Giant hammer hanging from a gantry, swinging across the track like a pendulum.
+func _build_hammer(root: Node3D, e: Dictionary) -> void:
+	var metal := _mat("gate_metal", theme.get("metal", Color("3a3f6a")), 0.5)
+	var neon := _mat("hammer_neon", theme.get("neon", Color("ff2fd0")), 0.2, 3.0, 0.0)
+	var head := _mat("hammer_head", Color("ffcf3a"), 0.4, 0.4)
+	var top := 6.0
+	var r := LevelGen.HALF_W + 0.5
+	for sx in [-1.0, 1.0]:
+		_box(root, Vector3(0.35, top, 0.35), Vector3(sx * r, top * 0.5, 0.0), metal)
+	_box(root, Vector3(r * 2.0 + 0.4, 0.4, 0.5), Vector3(0.0, top, 0.0), metal)
+	_box(root, Vector3(r * 2.0, 0.08, 0.55), Vector3(0.0, top - 0.25, 0.0), neon)
+	var pivot := Node3D.new()
+	pivot.position = Vector3(0.0, top, 0.0)
+	root.add_child(pivot)
+	var arm := top - 0.9
+	_box(pivot, Vector3(0.2, arm, 0.2), Vector3(0.0, -arm * 0.5, 0.0), metal)
+	var hd := _cone(pivot, 0.75, 0.75, 1.5, Vector3(0.0, -arm, 0.0), head, 12, Vector3(PI * 0.5, 0.0, 0.0))
+	hd.scale = Vector3(1.0, 1.0, 1.0)
+	_torus(pivot, 0.72, 0.82, Vector3(0.0, -arm, 0.62), neon)
+	_torus(pivot, 0.72, 0.82, Vector3(0.0, -arm, -0.62), neon)
+	e["pivot"] = pivot
+	e["arm"] = arm
+
+
+## Tetromino-style pieces that drop from the sky as you get close.
+func _build_tetro(root: Node3D, e: Dictionary) -> void:
+	var cols := [Color("00e5ff"), Color("ffd166"), Color("c56bff"), Color("39ff9f"), Color("ff5e5e"), Color("ff9a3d"), Color("4f7bff")]
+	var r := RandomNumberGenerator.new()
+	r.seed = int(e.get("seed", 1))
+	var fall := Node3D.new()
+	fall.position = Vector3(0.0, 14.0, 0.0)
+	root.add_child(fall)
+	var cell := 0.9
+	var lim := track.bounds(float(e.z))
+	for b in e.blocks:
+		var v: Vector2 = b
+		var x0 := maxf(v.x, lim.x)
+		var x1 := minf(v.y, lim.y)
+		var n := int(round((x1 - x0) / cell))
+		if n <= 0:
+			continue
+		var cw := (x1 - x0) / n
+		var shape := r.randi() % 4
+		var col: Color = cols[r.randi() % cols.size()]
+		var m := _mat("tetro_%s" % col.to_html(), col, 0.3, 0.8)
+		var edge := _mat("tetro_edge", Color.WHITE, 0.2, 1.0, 0.0)
+		for k in n:
+			var h := 1
+			match shape:
+				0: h = 2 if k == 0 else 1                      # L
+				1: h = 2 if k == n / 2 else 1                  # T
+				2: h = 2 if k % 2 == 0 else 1                  # zig
+				_: h = 2                                       # square-ish wall
+			for j in h:
+				var c := Vector3(x0 + cw * (k + 0.5), cell * (j + 0.5), 0.0)
+				_box(fall, Vector3(cw - 0.06, cell - 0.06, 1.7), c, m)
+				_box(fall, Vector3(cw - 0.02, 0.05, 1.74), c + Vector3(0.0, cell * 0.5 - 0.04, 0.0), edge)
+	e["mover"] = fall
+
+
+## Round portal: a ring of light with a swirling disc. Leads to another world.
+func _build_portal(root: Node3D, e: Dictionary) -> void:
+	var look: Dictionary = ZONE_LOOKS.get(String(e.zone), {})
+	var c1: Color = look.get("sky_horizon", Color("ff2fd0"))
+	var c2: Color = look.get("grid", Color("00e5ff"))
+	var r := LevelGen.HALF_W + 0.3
+	var spin := Node3D.new()
+	spin.position = Vector3(0.0, r * 0.75, 0.0)
+	root.add_child(spin)
+	_torus(spin, r - 0.25, r + 0.1, Vector3.ZERO, _mat("portal_ring_" + String(e.zone), c2, 0.2, 2.0, 0.0), Vector3(PI * 0.5, 0.0, 0.0))
+	for k in 8:
+		var a := TAU * k / 8.0
+		_box(spin, Vector3(0.5, 0.5, 0.5), Vector3(cos(a), sin(a), 0.0) * (r + 0.2), _mat("portal_gem_" + String(e.zone), c1, 0.2, 3.0, 0.0), Vector3(0.0, 0.0, a + PI * 0.25))
+	var disc := CylinderMesh.new()
+	disc.top_radius = r - 0.25
+	disc.bottom_radius = r - 0.25
+	disc.height = 0.04
+	disc.radial_segments = 32
+	disc.rings = 1
+	var dm := _fx_mat("portal_disc_" + String(e.zone), Color(c1, 0.25), 0.4)
+	dm.cull_mode = BaseMaterial3D.CULL_DISABLED
+	var d := _mi(spin, disc, dm, Vector3.ZERO, Vector3(PI * 0.5, 0.0, 0.0))
+	d.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var lbl := Label3D.new()
+	lbl.text = String(e.zone)
+	lbl.font = load("res://fonts/Montserrat-Black.ttf")
+	lbl.font_size = 96
+	lbl.pixel_size = 0.005
+	lbl.outline_size = 18
+	lbl.modulate = c2.lightened(0.3)
+	lbl.position = Vector3(0.0, r * 1.75 + 0.6, 0.0)
+	lbl.rotation.y = PI
+	root.add_child(lbl)
+	e["spinner"] = spin
+
+
+## Twin gate: two glowing arches marking where the ball splits / joins again.
+func _build_twin_gate(root: Node3D, split: bool) -> void:
+	var col := Color("ff6be0") if split else Color("39ff9f")
+	var m := _mat("twin_gate_%s" % split, col, 0.2, 3.0, 0.0)
+	for sx in [-1.8, 1.8]:
+		for k in 9:
+			var a := PI * k / 8.0
+			_box(root, Vector3(0.25, 0.25, 0.25), Vector3(sx + cos(a) * 1.2, 0.2 + sin(a) * 1.6, 0.0), m)
+	var pr := PrismMesh.new()
+	pr.size = Vector3(0.7, 0.6, 0.04)
+	for sx in [-1.8, 1.8]:
+		_mi(root, pr, _fx_mat("twin_arrow", Color(col, 0.85), 2.5), Vector3(sx, 0.05, -1.5), Vector3(-PI * 0.5, 0.0, 0.0)).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+
+## Speed pad: glowing chevrons on the floor.
+func _build_speedpad(root: Node3D) -> void:
+	var m := _fx_mat("pad_chev", Color(1.0, 0.82, 0.25, 0.9), 3.0)
+	for k in 3:
+		for sx in [-2.2, 0.0, 2.2]:
+			var pr := PrismMesh.new()
+			pr.size = Vector3(1.4, 0.7, 0.04)
+			var ch := _mi(root, pr, m, Vector3(sx, 0.04, -0.8 + k * 0.8), Vector3(-PI * 0.5, 0.0, 0.0))
+			ch.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+
+## Mystery box: a glowing cube with "?" on every side.
+func _build_box(root: Node3D, e: Dictionary) -> void:
+	var spinner := Node3D.new()
+	spinner.position = Vector3(e.x, 1.0, 0.0)
+	root.add_child(spinner)
+	var body := _fx_mat("box_body", Color(1.0, 0.75, 0.2, 0.55), 1.5)
+	_box(spinner, Vector3(0.9, 0.9, 0.9), Vector3.ZERO, body)
+	var edge := _mat("box_edge", Color("fff3b0"), 0.2, 3.0, 0.0)
+	for a in [Vector3(0, 0.45, 0.45), Vector3(0, -0.45, 0.45), Vector3(0, 0.45, -0.45), Vector3(0, -0.45, -0.45)]:
+		_box(spinner, Vector3(0.95, 0.06, 0.06), a, edge)
+	for a in [Vector3(0.45, 0, 0.45), Vector3(-0.45, 0, 0.45), Vector3(0.45, 0, -0.45), Vector3(-0.45, 0, -0.45)]:
+		_box(spinner, Vector3(0.06, 0.95, 0.06), a, edge)
+	for k in 4:
+		var q := Label3D.new()
+		q.text = "?"
+		q.font = load("res://fonts/Montserrat-Black.ttf")
+		q.font_size = 72
+		q.pixel_size = 0.008
+		q.outline_size = 12
+		q.modulate = Color.WHITE
+		var a2 := TAU * k / 4.0
+		q.position = Vector3(sin(a2), 0.0, cos(a2)) * 0.47
+		q.rotation.y = a2
+		spinner.add_child(q)
+	e["spinner"] = spinner
+
+
+## Secret chest on the edge of the track.
+func _build_chest(root: Node3D, e: Dictionary) -> void:
+	var spinner := Node3D.new()
+	spinner.position = Vector3(e.x, 0.0, 0.0)
+	root.add_child(spinner)
+	var wood := _mat("chest_wood", Color("8a4b22"), 0.6)
+	var gold := _mat("gold", Color("ffc531"), 0.3, 1.5)
+	_box(spinner, Vector3(0.9, 0.5, 0.6), Vector3(0.0, 0.25, 0.0), wood)
+	_box(spinner, Vector3(0.95, 0.08, 0.65), Vector3(0.0, 0.5, 0.0), gold)
+	_box(spinner, Vector3(0.9, 0.25, 0.6), Vector3(0.0, 0.66, 0.0), wood)
+	_box(spinner, Vector3(0.14, 0.18, 0.05), Vector3(0.0, 0.5, 0.32), gold)
+	var glow := _fx_mat("chest_glow", Color(1.0, 0.85, 0.3, 0.35), 2.0)
+	var beam := CylinderMesh.new()
+	beam.top_radius = 0.1
+	beam.bottom_radius = 0.5
+	beam.height = 3.0
+	beam.radial_segments = 12
+	_mi(spinner, beam, glow, Vector3(0.0, 1.5, 0.0)).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	e["spinner"] = spinner
+
+
+## Ten bowling pins after the finish line.
+func _spawn_pins(d: float) -> void:
+	pins_root = Node3D.new()
+	level_root.add_child(pins_root)
+	pins_root.transform = track.frame(minf(d, track.length - 1.0))
+	var white := _mat("pin_white", Color("f6f6ff"), 0.3)
+	var red := _mat("pin_red", theme.get("neon", Color("ff2fd0")), 0.3, 1.5, 0.0)
+	var rows := [[0.0], [-0.5, 0.5], [-1.0, 0.0, 1.0], [-1.5, -0.5, 0.5, 1.5]]
+	for ri in rows.size():
+		for px in rows[ri]:
+			var pin := Node3D.new()
+			pin.position = Vector3(float(px) * 1.05, 0.0, ri * 0.9)
+			pins_root.add_child(pin)
+			_cone(pin, 0.2, 0.12, 0.7, Vector3(0.0, 0.35, 0.0), white, 10)
+			_ball(pin, 0.15, Vector3(0.0, 0.85, 0.0), white)
+			_cone(pin, 0.135, 0.135, 0.08, Vector3(0.0, 0.66, 0.0), red, 10)
+			_pins.append([pin, Vector3.ZERO, Vector3.ZERO, false])
+	# lane markings leading to the pins
+	var arrow := _fx_mat("pin_arrow", Color(1.0, 0.85, 0.3, 0.8), 2.5)
+	for k in 3:
+		var pr := PrismMesh.new()
+		pr.size = Vector3(0.5, 0.6, 0.04)
+		_mi(pins_root, pr, arrow, Vector3(0.0, 0.04, -4.0 - k * 1.2), Vector3(-PI * 0.5, 0.0, 0.0)).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+
+## n pins fall (the ones nearest to where the ball hits go first).
+func knock_pins(n: int, x: float) -> void:
+	if pins_root == null:
+		return
+	var order := range(_pins.size())
+	order.sort_custom(func(a: int, b: int): return absf((_pins[a][0] as Node3D).position.x - x) < absf((_pins[b][0] as Node3D).position.x - x))
+	for i in mini(n, order.size()):
+		var p: Array = _pins[order[i]]
+		var pos: Vector3 = (p[0] as Node3D).position
+		p[1] = Vector3((pos.x - x) * 2.5 + randf_range(-1.5, 1.5), randf_range(3.0, 6.0), randf_range(3.0, 7.0))
+		p[2] = Vector3(randf_range(-9, 9), randf_range(-6, 6), randf_range(-9, 9))
+		p[3] = true
+	burst_confetti(pins_root.global_position + Vector3(0.0, 1.0, 0.0))
+
+
+func _update_pins(delta: float) -> void:
+	for p in _pins:
+		if not p[3]:
+			continue
+		var n: Node3D = p[0]
+		var v: Vector3 = p[1]
+		v.y -= 18.0 * delta
+		n.position += v * delta
+		n.rotation += (p[2] as Vector3) * delta
+		if n.position.y < 0.0 and v.y < 0.0:
+			n.position.y = 0.0
+			v = Vector3(v.x * 0.5, -v.y * 0.3, v.z * 0.5)
+			p[2] = (p[2] as Vector3) * 0.5
+		p[1] = v
+
+
+## Coin-rush security drone: chases you with flashing lights (just for fun).
+func _spawn_drone() -> void:
+	drone = Node3D.new()
+	level_root.add_child(drone)
+	var body := _mat("drone_body", Color("1c1f3a"), 0.4)
+	_box(drone, Vector3(1.1, 0.35, 0.8), Vector3.ZERO, body)
+	for sx in [-0.8, 0.8]:
+		for sz in [-0.5, 0.5]:
+			_torus(drone, 0.22, 0.28, Vector3(sx, 0.1, sz), _mat("drone_rotor", Color("c8d2ff"), 0.3, 1.0, 0.0))
+	for k in 2:
+		var lm := StandardMaterial3D.new()
+		lm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		lm.albedo_color = Color("ff2a2a") if k == 0 else Color("2a6bff")
+		_drone_lights.append(lm)
+		_box(drone, Vector3(0.35, 0.16, 0.3), Vector3(-0.25 + k * 0.5, 0.25, 0.0), lm)
+	var tag := Label3D.new()
+	tag.text = "SECURITY"
+	tag.font = load("res://fonts/Montserrat-Black.ttf")
+	tag.font_size = 48
+	tag.pixel_size = 0.006
+	tag.outline_size = 10
+	tag.position = Vector3(0.0, 0.7, 0.0)
+	tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	drone.add_child(tag)
+
+
+# ------------------------------------------------------------------ portal worlds
+
+## "" = back to the level's own world.
+func set_zone(z: String) -> void:
+	if z == _zone:
+		return
+	_zone = z
+	var look: Dictionary = ZONE_LOOKS.get(z, {})
+	var base := _base_theme if not _base_theme.is_empty() else theme
+	var to_top: Color = look.get("sky_top", base.get("sky_top", Color.BLACK))
+	var to_hor: Color = look.get("sky_horizon", base.get("sky_horizon", Color.BLACK))
+	var to_fog: Color = look.get("fog", base.get("fog", Color.BLACK))
+	var to_grid: Color = look.get("grid", base.get("grid", Color("ff2fd0")))
+	var to_edge: Color = look.get("edge", base.get("edge", Color("00e5ff")))
+	var to_moon: Color = look.get("moon", base.get("moon", Color.WHITE))
+	var tw := create_tween().set_parallel(true)
+	tw.tween_property(sky_mat, "sky_top_color", to_top, 0.6)
+	tw.tween_property(sky_mat, "sky_horizon_color", to_hor, 0.6)
+	tw.tween_property(sky_mat, "ground_horizon_color", to_hor, 0.6)
+	tw.tween_property(sky_mat, "ground_bottom_color", to_top.darkened(0.3), 0.6)
+	tw.tween_property(env, "fog_light_color", to_fog, 0.6)
+	tw.tween_property(moon_mat, "albedo_color", to_moon, 0.6)
+	if _track_mat:
+		tw.tween_method(func(c: Color): _track_mat.set_shader_parameter("grid_color", c), _track_mat.get_shader_parameter("grid_color"), to_grid, 0.6)
+		tw.tween_method(func(c: Color): _track_mat.set_shader_parameter("lane_color", c), _track_mat.get_shader_parameter("lane_color"), to_edge, 0.6)
+	if zone_fx:
+		zone_fx.queue_free()
+		zone_fx = null
+	if ambient:
+		ambient.visible = z == ""
+	if z != "":
+		_spawn_zone_fx(String(look.get("fx", "")), look.get("fxc", Color.WHITE))
+
+
+func _spawn_zone_fx(kind: String, col: Color) -> void:
+	if kind == "":
+		return
+	zone_fx = CPUParticles3D.new()
+	zone_fx.local_coords = false
+	zone_fx.emission_shape = CPUParticles3D.EMISSION_SHAPE_BOX
+	zone_fx.emission_box_extents = Vector3(9.0, 5.0, 30.0)
+	zone_fx.amount = 90
+	zone_fx.lifetime = 4.0
+	var dot := SphereMesh.new()
+	dot.radius = 0.07
+	dot.height = 0.14
+	dot.radial_segments = 6
+	dot.rings = 3
+	zone_fx.mesh = dot
+	zone_fx.spread = 180.0
+	zone_fx.gravity = Vector3.ZERO
+	zone_fx.initial_velocity_max = 0.4
+	var g := Gradient.new()
+	g.set_color(0, Color(col, 0.0))
+	g.set_color(1, Color(col, 0.0))
+	g.add_point(0.5, Color(col, 1.0))
+	match kind:
+		"cubes":
+			var bm := BoxMesh.new()
+			bm.size = Vector3(0.35, 0.35, 0.35)
+			zone_fx.mesh = bm
+			zone_fx.amount = 50
+			zone_fx.gravity = Vector3(0.0, -0.6, 0.0)
+			g = Gradient.new()
+			g.set_color(0, Color("4cff4c"))
+			g.set_color(1, Color("8a5a2b"))
+			g.add_point(0.5, Color("c8f0ff"))
+		"snow":
+			zone_fx.gravity = Vector3(0.3, -1.4, 0.0)
+		"embers":
+			zone_fx.gravity = Vector3(0.0, 1.4, 0.0)
+		"dust":
+			zone_fx.gravity = Vector3(-2.0, 0.0, 0.0)
+			zone_fx.initial_velocity_max = 1.0
+		"sprinkles":
+			var bm2 := BoxMesh.new()
+			bm2.size = Vector3(0.06, 0.25, 0.06)
+			zone_fx.mesh = bm2
+			zone_fx.gravity = Vector3(0.0, -1.0, 0.0)
+			zone_fx.angular_velocity_min = -180.0
+			zone_fx.angular_velocity_max = 180.0
+			g = Gradient.new()
+			g.set_color(0, Color("ff5ea8"))
+			g.set_color(1, Color("6be4ff"))
+			g.add_point(0.5, Color("ffe14f"))
+	zone_fx.color_ramp = g
+	zone_fx.material_override = _fx_mat("zonefx_" + kind, Color.WHITE, 2.5)
+	(zone_fx.material_override as StandardMaterial3D).vertex_color_use_as_albedo = true
+	level_root.add_child(zone_fx)
 
 
 func trigger_current(e: Dictionary) -> void:
@@ -1263,6 +1385,19 @@ func update(delta: float, run_t: float, t: float, ball: Vector3, boat_z: float, 
 	moon_mat.emission_energy_multiplier = lerpf(moon_mat.emission_energy_multiplier, glow, 1.0 - exp(-6.0 * delta))
 	if ambient:
 		ambient.position = ball + f.basis.z * 20.0 + Vector3(0.0, 2.0, 0.0)
+	if zone_fx:
+		zone_fx.position = ball + f.basis.z * 18.0 + Vector3(0.0, 2.0, 0.0)
+	if not _pins.is_empty():
+		_update_pins(delta)
+	if drone:
+		# flies just ahead of the ball, looking back at it
+		var df := track.frame(minf(boat_z + 9.0, track.length - 1.0))
+		drone.global_position = drone.global_position.lerp(df.origin + df.basis.x * sin(t * 1.3) * 2.0 + Vector3(0.0, 3.4 + sin(t * 2.0) * 0.3, 0.0), 1.0 - exp(-4.0 * delta))
+		drone.basis = df.basis.rotated(Vector3.UP, PI)
+		var on := int(t * 6.0) % 2 == 0
+		if _drone_lights.size() == 2:
+			_drone_lights[0].albedo_color = Color("ff2a2a") if on else Color("3a0a0a")
+			_drone_lights[1].albedo_color = Color("2a6bff") if not on else Color("0a1a3a")
 	if raft:
 		raft.rotation.y += delta * 0.6
 
@@ -1284,27 +1419,22 @@ func update(delta: float, run_t: float, t: float, ball: Vector3, boat_z: float, 
 				else:
 					mvr.position.x = float(e.gx) + float(e.amp) * LevelGen.wave(e, run_t)
 			"hammer":
-				var arm: Node3D = e.mover
-				arm.rotation.z = asin(clampf(float(e.amp) * LevelGen.wave(e, run_t) / 4.6, -1.0, 1.0))
-			"rain":
-				# falls from the sky when the ball gets close; shadow grows first
-				var piece: Node3D = e.mover
-				var dist := z - boat_z
-				var u := clampf((26.0 - dist) / 12.0, 0.0, 1.0)
-				piece.position.y = 14.0 * (1.0 - u * u)
-				if u >= 1.0 and not e.get("landed", false):
-					e["landed"] = true
-					burst_splash(piece.global_position)
-				(e.shadow as Node3D).scale = Vector3.ONE * lerpf(0.4, 1.0, u)
-			"box", "key", "crystal":
-				if not e.taken and e.has("spinner"):
-					var spn: Node3D = e.spinner
-					spn.rotation.y += delta * (2.0 if e.kind != "crystal" else 0.6)
-					if e.kind != "crystal":
-						spn.position.y = float(e.y) + sin(t * 3.0 + z) * 0.12
-			"portal", "twin_in", "twin_out":
-				if e.has("spinner"):
-					(e.spinner as Node3D).rotation.z += delta * 2.5
+				var hp: Node3D = e.pivot
+				# pendulum: the head is at s = amp * wave, hanging from the gantry
+				var sx := float(e.amp) * LevelGen.wave(e, run_t)
+				hp.rotation.z = asin(clampf(sx / float(e.arm), -1.0, 1.0))
+			"tetro":
+				var fl: Node3D = e.mover
+				var dz := z - boat_z
+				var target_y := clampf((dz - 32.0) * 0.8, 0.0, 14.0)
+				fl.position.y = minf(fl.position.y, target_y)
+			"portal", "box":
+				var ps: Node3D = e.spinner
+				if e.kind == "portal":
+					ps.rotation.z += delta * 1.2
+				elif not e.taken:
+					ps.rotation.y += delta * 2.0
+					ps.position.y = 1.0 + sin(t * 3.0 + z) * 0.12
 			"mines":
 				if not e.get("smashed", false):
 					var ms: Node3D = e.spinner

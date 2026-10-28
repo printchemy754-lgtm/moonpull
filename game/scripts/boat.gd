@@ -159,23 +159,6 @@ func tick(delta: float, t: float, _water_vel: float, speed_factor: float, alive:
 	if captain:
 		captain.rotation.z = -_lean + sin(t * 2.6) * 0.04 * (1.0 - _pull)
 		captain.position.y = 0.08 + absf(sin(t * 7.0)) * 0.02 * speed_factor
-	if _dance > 0.0 and captain:
-		# victory dance: hop, spin and wave both arms (different move each win)
-		_dance += delta
-		var k := _dance * 8.0
-		match _dance_kind:
-			0:
-				captain.position.y = 0.08 + absf(sin(k)) * 0.35
-				captain.rotation.y = sin(k * 0.5) * 0.9
-			1:
-				captain.position.y = 0.08 + absf(sin(k * 0.5)) * 0.2
-				captain.rotation.y = _dance * 6.0
-			_:
-				captain.position.y = 0.08 + absf(sin(k)) * 0.15
-				captain.rotation.z = sin(k * 0.5) * 0.4
-		if arm_l:
-			arm_l.rotation.z = 2.2 + sin(k) * 0.8
-			arm_r.rotation.z = -2.2 + sin(k + PI) * 0.8
 	if flag:
 		flag.rotation.y = sin(t * 9.0) * 0.35
 	if still:
@@ -212,17 +195,7 @@ func trick_progress(u: float) -> void:
 			_: captain.rotation.x = e
 
 
-var _dance := 0.0
-var _dance_kind := 0
-
-
-func dance() -> void:
-	_dance = 0.001
-	_dance_kind = randi() % 3
-
-
 func reset_pose() -> void:
-	_dance = 0.0
 	pivot.rotation = Vector3.ZERO
 	pivot.position = Vector3.ZERO
 	if model:

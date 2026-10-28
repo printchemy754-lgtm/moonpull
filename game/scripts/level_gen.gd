@@ -30,13 +30,14 @@ const STEER_V := 5.0           # sideways speed used to space obstacles fairly
 const JUMP_TIME := 0.73        # = 2 * JUMP_V / GRAVITY (air time of a ramp jump)
 const EDGE := 30.0
 
-const OBSTACLES := ["wall", "gate2", "block", "mines", "slider", "sweeper", "hammer", "rain"]
+const OBSTACLES := ["wall", "gate2", "block", "mines", "slider", "sweeper", "hammer", "tetro"]
 const VOIDS := ["void", "pvoid"]
-const PICKUPS := ["boost", "slow", "shield", "magnet", "box"]
+const PICKUPS := ["boost", "slow", "shield", "magnet", "box", "chest"]
 const TWIN_GAP := 0.8          # half width of the hole between the twin lanes
-const ZONES := ["SUNSET", "GALAXY", "CANDY", "ICE", "LAVA", "MATRIX"]
+## Worlds you visit through a portal (each one looks completely different).
+const ZONES := ["SUNSET BAY", "DEEP GALAXY", "CANDY LAND", "FROST PEAK", "LAVA CORE", "PIXEL WORLD", "WILD DESERT"]
 
-## Every level has its own character (like Going Balls courses).
+## Every level has its own character (its "course").
 const COURSES := {
 	"CLASSIC RUN": {},
 	"HAMMER ALLEY": {"hammer": 4.0, "wall": 1.5},
@@ -46,17 +47,19 @@ const COURSES := {
 	"PORTAL STORM": {"portal": 3.0, "box": 2.0},
 	"ROLLER COASTER": {"drop": 3.0, "run": 3.0, "speedpad": 2.0},
 	"MINE FIELD": {"mines": 3.0, "block": 2.0, "sweeper": 2.0},
-	"BLOCK RAIN": {"rain": 4.0, "crystals": 2.0},
-	"CRYSTAL CAVES": {"crystals": 4.0, "narrow": 1.5, "holes": 1.5},
+	"BLOCK DROP": {"tetro": 5.0, "box": 1.5},
+	"THREE LANES": {"lanes3": 5.0, "chest": 2.0},
+	"SKY OBBY": {"platform": 3.0, "jump": 2.5, "narrow": 2.0},
 }
-const COURSE_ORDER := ["CLASSIC RUN", "JUMP PARK", "SNAKE BRIDGES", "HAMMER ALLEY", "BLOCK RAIN", "PORTAL STORM", "TWIN TROUBLE", "CRYSTAL CAVES", "ROLLER COASTER", "MINE FIELD"]
+const COURSE_ORDER := ["CLASSIC RUN", "JUMP PARK", "BLOCK DROP", "SNAKE BRIDGES", "HAMMER ALLEY", "PORTAL STORM",
+	"THREE LANES", "TWIN TROUBLE", "ROLLER COASTER", "SKY OBBY", "MINE FIELD"]
 const CURRENTS: Array = []
 
 ## The track currently being played (rivals and the autopilot read it).
 static var track: Track
 
 ## New things arrive regularly so the game keeps surprising you.
-const UNLOCKS := {2: "holes", 3: "jump", 4: "narrow", 5: "hammer", 6: "rain", 7: "twin", 8: "gate2", 9: "platform", 10: "mines", 11: "block", 12: "slider", 13: "zigzag", 14: "sweeper"}
+const UNLOCKS := {2: "holes", 3: "jump", 4: "tetro", 5: "hammer", 6: "zigzag", 7: "twin", 8: "lanes3", 9: "platform", 10: "mines", 11: "block", 12: "slider", 13: "narrow", 14: "sweeper", 15: "gate2"}
 
 ## Shown the first time a new thing appears.
 const INTROS := {
@@ -72,14 +75,13 @@ const INTROS := {
 	"slider": ["MOVING DOOR", "The door slides. Follow it!"],
 	"sweeper": ["SWEEPER", "A block slides across. Dodge it!"],
 	"hammer": ["GIANT HAMMERS", "Wait for the swing, then roll past!"],
-	"twin_in": ["TWIN BALLS", "Your ball splits in two! Slide to move them apart or together."],
+	"twin": ["TWIN BALLS", "Your ball splits in two! Both must get through."],
 	"portal": ["PORTAL", "Roll through to jump into another world!"],
 	"box": ["MYSTERY BOX", "Grab it for a random power!"],
 	"speedpad": ["SPEED PAD", "Zoom!"],
-	"rain": ["BLOCK RAIN", "Blocks fall from the sky! Watch the shadows."],
-	"crystal": ["CRYSTAL BLOCKS", "Smash them for coins!"],
-	"key": ["SECRET KEY", "A golden key is hidden in every level. Find it!"],
-	"pins": ["BOWLING!", "Knock down all the pins at the finish!"],
+	"tetro": ["FALLING BLOCKS", "Blocks drop from the sky. Find the gap!"],
+	"lanes3": ["THREE LANES", "Left, middle or right. Pick one!"],
+	"chest": ["SECRET CHEST", "Hidden treasure on the edge!"],
 	"boost": ["SPEED RING", "Faster ball, double coins!"],
 	"slow": ["MOON RING", "Slows time for a moment."],
 	"shield": ["SHIELD", "Survive one crash."],
@@ -96,11 +98,25 @@ static func special_for(level: int) -> String:
 	return "normal"
 
 
-## The level's course (its character). Level 1 and boss / rush levels are classic.
+## The level's course (its character). Levels 1-2 and boss / rush levels are classic.
 static func course_for(level: int) -> String:
-	if level <= 2 or special_for(level) != "normal":
+	if level <= 2 or special_for(level) == "rush":
 		return "CLASSIC RUN"
-	return COURSE_ORDER[(level - 1) % COURSE_ORDER.size()]
+	# only courses whose main elements are already unlocked
+	var have := _patterns_for(level)
+	var n := COURSE_ORDER.size() - 1      # (CLASSIC RUN is index 0)
+	var start := (level - 3) % n
+	for k in n:
+		var c: String = COURSE_ORDER[1 + (start + k) % n]
+		var main_key: String = ""
+		var best := 0.0
+		for key in COURSES[c]:
+			if float(COURSES[c][key]) > best:
+				best = float(COURSES[c][key])
+				main_key = key
+		if main_key == "" or have.has(main_key):
+			return c
+	return "CLASSIC RUN"
 
 
 static func speed_for(level: int) -> float:
@@ -259,14 +275,15 @@ static func _patterns_for(level: int) -> Dictionary:
 		p["portal"] = 0.5
 		p["box"] = 0.6
 		p["speedpad"] = 0.6
+		p["chest"] = 0.3
+	if level >= 4:
+		p["tetro"] = 1.0
 	if level >= 5:
 		p["hammer"] = 1.2
 	if level >= 7:
 		p["twin"] = 0.8
-	if level >= 4:
-		p["crystals"] = 0.8
-	if level >= 6:
-		p["rain"] = 1.0
+	if level >= 8:
+		p["lanes3"] = 0.9
 	return p
 
 
@@ -301,11 +318,6 @@ static func generate(level: int, seed_override := -1, endless := false) -> Dicti
 		queue = ["run", fresh, "wall", fresh]
 	if level >= 3 and not endless and special == "normal":
 		queue.insert(mini(queue.size(), 2), "portal")   # every level visits another world
-	var signature: Array = []
-	if special == "normal" and level >= 3:
-		for k in COURSES.get(course, {}):
-			if k != "run" and (weights.has(k) or k in ["rain", "crystals", "speedpad", "box", "portal"]):
-				signature.append(k)
 	var since_cp := 0
 	for s in segments:
 		if endless:
@@ -320,47 +332,17 @@ static func generate(level: int, seed_override := -1, endless := false) -> Dicti
 				weights = _patterns_for(lv)
 				_apply_course(weights, COURSE_ORDER[(s / 25) % COURSE_ORDER.size()])
 		var pat: String = queue.pop_front() if not queue.is_empty() else _pick(weights, rng)
-		if signature.size() > 0 and s % 3 == 1 and not endless:
-			# every third piece is the course's own thing, so courses really differ
-			pat = signature[(s / 3) % signature.size()]
+		var n0: int = (g.items as Array).size()
 		_pattern(pat, tr, g)
+		if INTROS.has(pat):
+			for k in range(n0, (g.items as Array).size()):
+				if String(g.items[k].kind) != "checkpoint":
+					g.items[k]["intro"] = pat
+					break
 		since_cp += 1
 		if since_cp >= 3:
 			since_cp = 0
 			_checkpoint(tr, g)
-	if not endless:
-		# bowling lane before the finish line
-		tr.add(10.0, 0.0, 0.0, HALF_W, true)
-		var pins := _item("pins")
-		pins.z = tr.length
-		pins.depth = 2.0
-		g.items.append(pins)
-		_coin_line(g, pins.z - 9.0, pins.z - 2.0, float(g.before[0]), 0.0)
-		tr.add(4.0, 0.0, 0.0, HALF_W, true)
-		# the secret key: on the first jump, off to one side (steer in the air!)
-		if level >= 2:
-			var placed := false
-			for it in g.items:
-				if it.kind == "ramp" and not placed:
-					var ky := _item("key")
-					ky.x = 2.2 if rng.randf() < 0.5 else -2.2
-					ky.y = PICK_OFFSET + jump_height(0.5) * 0.9
-					ky.z = float(it.z) + float(g.speed) * JUMP_TIME * 0.5
-					ky.depth = 1.0
-					g.items.append(ky)
-					placed = true
-			if not placed:
-				# no jump: hide it at the edge of the track before a checkpoint
-				for it2 in g.items:
-					if it2.kind == "checkpoint" and not placed:
-						var k2 := _item("key")
-						k2.x = (HALF_W - 0.7) * (1.0 if rng.randf() < 0.5 else -1.0)
-						k2.y = PICK_OFFSET
-						k2.z = float(it2.z) - 3.0
-						k2.depth = 1.0
-						g.items.append(k2)
-						placed = true
-			g.items.sort_custom(func(a: Dictionary, b: Dictionary): return float(a.z) < float(b.z))
 	var finish := tr.length + 6.0
 	tr.add(40.0, 0.0, 0.0, HALF_W, true)
 	var out := {
@@ -368,6 +350,7 @@ static func generate(level: int, seed_override := -1, endless := false) -> Dicti
 		"speed": speed_for(level) if not endless else speed_for(2), "rise": 2.6, "fall": 2.2,
 	}
 	out["course"] = course
+	out["pins"] = finish + 14.0     # bowling pins after the finish line
 	if endless:
 		out["endless"] = true
 		out["ramp"] = ramp
@@ -656,6 +639,34 @@ static func _pattern(pat: String, tr: Track, g: Dictionary) -> void:
 				hm2.blocks = []
 				tr.add(rng.randf_range(4.0, 6.0), 0.0, 0.0, HALF_W, _rails(g))
 				_place(tr, g, hm2, [-2.6, 0.0, 2.6])
+		"tetro":
+			# falling block pieces: one gap, on the other side from where you are
+			var tw2 := clampf(door * 1.1, 2.0, 3.4)
+			var gx := _door_x(tw2, rng, float(g.before[0]))
+			var te := _item("tetro")
+			te.blocks = [Vector2(-HALF_W - 0.5, gx - tw2 * 0.5), Vector2(gx + tw2 * 0.5, HALF_W + 0.5)]
+			te.depth = 1.8
+			te.gx = gx
+			te.gw = tw2
+			te["seed"] = rng.randi()
+			_approach(tr, g, [gx])
+			_place(tr, g, te, [gx])
+		"lanes3":
+			# three lanes split by two holes: left, middle or right
+			_approach(tr, g, [0.0, 2.6, -2.6])
+			var l3 := rng.randf_range(14.0, 18.0)
+			var dl := tr.length
+			tr.add(l3, 0.0, 0.0, HALF_W, false)
+			tr.voids.append({"d0": dl, "d1": dl + l3, "kind": "hole", "s0": -1.95, "s1": -1.15})
+			tr.voids.append({"d0": dl, "d1": dl + l3, "kind": "hole", "s0": 1.15, "s1": 1.95})
+			var lv3 := _item("void")
+			lv3.z = dl + l3 * 0.5
+			lv3.depth = l3
+			lv3.blocks = [Vector2(-1.95, -1.15), Vector2(1.15, 1.95)]
+			g.items.append(lv3)
+			var lane: float = [0.0, 2.7, -2.7][rng.randi() % 3]
+			_coin_line(g, dl + 1.0, dl + l3 - 1.0, lane, lane)
+			g.before = [0.0, 2.7, -2.7] as Array[float]
 		"portal":
 			_approach(tr, g, [0.0])
 			var po := _item("portal")
@@ -675,10 +686,10 @@ static func _pattern(pat: String, tr: Track, g: Dictionary) -> void:
 			tr.add(2.0, 0.0, 0.0, HALF_W, true)
 			var d0t := tr.length
 			var walls := rng.randi_range(2, 4)
-			var tw := clampf(door * 0.8, 1.6, 2.2)
+			var tw := clampf(door * 0.7, 1.5, 2.0)
 			var a := 1.8
 			for k in walls:
-				tr.add(rng.randf_range(8.5, 11.0), 0.0, 0.0, HALF_W, false)
+				tr.add(rng.randf_range(8.0, 11.0), 0.0, 0.0, HALF_W, false)
 				var lo := TWIN_GAP + tw * 0.5 + 0.1
 				var hi := HALF_W - tw * 0.5 - 0.1
 				var nd := rng.randf_range(lo, hi)
@@ -686,6 +697,7 @@ static func _pattern(pat: String, tr: Track, g: Dictionary) -> void:
 					nd = hi if a < (lo + hi) * 0.5 else lo
 				var w2 := _wall([-nd, nd], tw)
 				w2.depth = 1.0
+				w2["intro"] = ""
 				tr.add(0.5, 0.0, 0.0, HALF_W, false)
 				w2.z = tr.length
 				g.items.append(w2)
@@ -710,39 +722,15 @@ static func _pattern(pat: String, tr: Track, g: Dictionary) -> void:
 			var d0s := tr.length
 			tr.add(14.0, rng.randf_range(-0.3, 0.3), -1.5, HALF_W, true)
 			_coin_line(g, d0s + 1.0, tr.length - 1.0, float(g.before[0]), float(g.before[0]))
-		"rain":
-			# Tetris-style pieces drop onto the track, one after another
-			var n := rng.randi_range(3, 5)
-			var side := 1.0 if rng.randf() < 0.5 else -1.0
-			for k in n:
-				var cells := rng.randi_range(1, 3)
-				var cw := 1.1
-				var start := side * rng.randf_range(0.2, HALF_W - cells * cw) if side > 0 else -rng.randf_range(0.2, HALF_W - cells * cw) - cells * cw
-				var rn := _item("rain")
-				rn.blocks = [Vector2(start, start + cells * cw)]
-				rn.depth = 1.1
-				rn["cells"] = cells
-				rn["shape"] = rng.randi() % 5
-				var free_s := start - 1.4 if side > 0 else start + cells * cw + 1.4
-				_approach(tr, g, [free_s], k == 0)
-				_place(tr, g, rn, [free_s])
-				side = -side
-		"crystals":
-			# Minecraft-style breakable blocks: roll into them for coins
-			tr.add(4.0, 0.0, 0.0, HALF_W, _rails(g))
-			var cs := rng.randf_range(-1.5, 1.5)
-			for k in 5:
-				var cr := _item("crystal")
-				cr.x = clampf(cs + sin(k * 0.9) * 1.4, -2.6, 2.6)
-				tr.add(2.6, 0.0, 0.0, HALF_W, _rails(g))
-				cr.z = tr.length
-				cr.depth = 1.0
-				g.items.append(cr)
-			tr.add(3.0, 0.0, 0.0, HALF_W, _rails(g))
 		"box":
 			var bx := _item("box")
 			bx.x = clampf(float(g.before[0]) + rng.randf_range(-1.5, 1.5), -2.4, 2.4)
 			_pickup(tr, g, bx)
+		"chest":
+			# a secret chest hidden on the very edge
+			var ch := _item("chest")
+			ch.x = 2.75 if rng.randf() < 0.5 else -2.75
+			_pickup(tr, g, ch)
 		"boost", "shield", "magnet":
 			var p3 := _item(pat)
 			p3.x = clampf(float(g.before[0]) + rng.randf_range(-1.2, 1.2), -2.4, 2.4)
@@ -822,29 +810,7 @@ static func pilot_target(items: Array, z: float, run_t: float, speed: float, x :
 		if float(e.z) - z > speed * 2.5 + 6.0:
 			break
 		var eta := maxf(0.0, (float(e.z) - z) / maxf(speed, 0.1))
-		var tx := pilot_x(e, run_t + eta, x)
-		if e.kind == "void":
-			# long holes (twin lanes): also dodge the walls standing inside them,
-			# without crossing the hole
-			var vz1 := float(e.z) + float(e.depth) * 0.5
-			for o in items:
-				if not is_obstacle(o.kind) or float(o.z) + float(o.depth) * 0.5 < z - BOAT_HALF_LEN or float(o.z) > vz1:
-					continue
-				if float(o.z) - z > speed * 2.5 + 6.0:
-					break
-				var eta2 := maxf(0.0, (float(o.z) - z) / maxf(speed, 0.1))
-				var ox := pilot_x(o, run_t + eta2, tx)
-				var lo := minf(ox, x)
-				var hi := maxf(ox, x)
-				var crosses := false
-				for bl in e.blocks:
-					var v: Vector2 = bl
-					if v.x < hi and v.y > lo:
-						crosses = true
-				if not crosses:
-					return ox
-				break
-		return tx
+		return pilot_x(e, run_t + eta, x)
 	var b := _bounds_at(z + speed * 0.5)
 	return clampf(x, b.x + 0.6, b.y - 0.6)
 
