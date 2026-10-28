@@ -46,6 +46,17 @@ func build(left: String, right: String, length: float, th: Dictionary, level_see
 	_built_to = -40.0
 
 
+## Respawn behind: rebuild the scenery from a bit before z.
+func rewind(z: float) -> void:
+	for c in _chunks:
+		(c[1] as Node3D).queue_free()
+	_chunks.clear()
+	var idx := maxi(int(floor((z - 60.0 + 40.0) / CHUNK)), 0)
+	_built_to = -40.0 + idx * CHUNK
+	_cursor = {-1.0: _built_to, 1.0: _built_to}
+	ensure(z + 210.0)
+
+
 func ensure(z_needed: float) -> void:
 	while _built_to < minf(z_needed, _limit):
 		_build_chunk(_built_to + CHUNK)
@@ -64,7 +75,7 @@ func _build_chunk(z_end: float) -> void:
 		rng.seed = _seed * 31 + idx * 977 + (7 if side < 0.0 else 13)
 		var style: String = _styles[0] if side > 0.0 else _styles[1]   # +s = screen left
 		var z: float = _cursor[side]
-		while z < z_end:
+		while z < minf(z_end, _limit):
 			var seg := rng.randf_range(STEP_MIN, STEP_MAX)
 			if track:
 				_seg_xf = track.frame(clampf(z, 0.0, track.length)) * Transform3D(Basis.IDENTITY, Vector3(0.0, Y_OFF, -z))

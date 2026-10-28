@@ -4,7 +4,7 @@ extends RefCounted
 ## Every level is a real, felt difference — the long-term coin sink.
 
 const MAX := 5
-const COSTS := [800, 2000, 4500, 9000, 16000]
+const COSTS := [5000, 12000, 27000, 54000, 96000]
 const LIST := [
 	{"id": "fever", "name": "FEVER TIME", "icon": "bolt", "color": Color("ff4fd8"), "desc": "FEVER lasts %.0fs"},
 	{"id": "charge", "name": "FEVER CHARGE", "icon": "wave", "color": Color("ff8a3d"), "desc": "FEVER after %d clean passes"},

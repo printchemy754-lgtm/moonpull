@@ -30,6 +30,8 @@ var _pull := 0.0
 var shell: Node3D          # rolls
 var still: Node3D          # rings that don't roll (planet style)
 var _lean := 0.0
+var riding := false        # solid ball: the captain runs on top of it
+static var _ball_shader: Shader
 
 
 func _ready() -> void:
@@ -65,12 +67,20 @@ func apply(new_cfg: Dictionary) -> void:
 	still = Node3D.new()
 	still.position = Vector3(0.0, BALL_R, 0.0)
 	model.add_child(still)
-	_shell(int(cfg.get("hull", 0)), paint, glow)
-	# the captain stands inside, always upright
-	_captain(Vector3(0.0, 0.08, 0.0), hat, glow)
-	captain.scale = Vector3(0.62, 0.62, 0.62)
-	_cyl(0.32, 0.36, 0.06, _m(Color("1c1f3a")), Vector3(0.0, 0.07, 0.0), Vector3.ZERO, 16)
-	_cyl(0.36, 0.36, 0.02, _m(glow, 2.5, 0.0), Vector3(0.0, 0.1, 0.0), Vector3.ZERO, 16)
+	var hull := Custom.item("hull", cfg.get("hull", 0))
+	riding = int(hull.get("pattern", 0)) > 0
+	if riding:
+		_patterned(int(hull.pattern), hull.get("a", Color.WHITE))
+		# the captain balances on top of the rolling ball, circus style
+		_captain(Vector3(0.0, BALL_R * 2.0 - 0.02, 0.0), hat, glow)
+		captain.scale = Vector3(0.6, 0.6, 0.6)
+	else:
+		_shell(int(cfg.get("hull", 0)), paint, glow)
+		# the captain stands inside, always upright
+		_captain(Vector3(0.0, 0.08, 0.0), hat, glow)
+		captain.scale = Vector3(0.62, 0.62, 0.62)
+		_cyl(0.32, 0.36, 0.06, _m(Color("1c1f3a")), Vector3(0.0, 0.07, 0.0), Vector3.ZERO, 16)
+		_cyl(0.36, 0.36, 0.02, _m(glow, 2.5, 0.0), Vector3(0.0, 0.1, 0.0), Vector3.ZERO, 16)
 	var pole := Node3D.new()
 	pole.position = Vector3(0.0, 0.0, -0.12)
 	captain.add_child(pole)
@@ -83,6 +93,23 @@ func apply(new_cfg: Dictionary) -> void:
 	if String(f.pattern) != "solid":
 		_box(Vector3(0.035, 0.06, 0.34), _m(f.b, 0.0, 0.0), Vector3(0.0, 0.0, -0.17), Vector3.ZERO, flag)
 	_set_trail(Custom.item("trail", cfg.get("trail", 0)))
+
+
+## Solid patterned ball (beach ball, soccer, lava rock...): one sphere + shader.
+func _patterned(pattern: int, a: Color) -> void:
+	if _ball_shader == null:
+		_ball_shader = load("res://shaders/ball.gdshader")
+	var m := ShaderMaterial.new()
+	m.shader = _ball_shader
+	m.set_shader_parameter("pattern", pattern)
+	m.set_shader_parameter("col_a", a)
+	m.next_pass = Toon.outline_mat(0.022)
+	var sp := SphereMesh.new()
+	sp.radius = BALL_R
+	sp.height = BALL_R * 2.0
+	sp.radial_segments = 32
+	sp.rings = 16
+	_add(sp, m, Vector3.ZERO, Vector3.ZERO, shell)
 
 
 ## Shell styles (the six "hulls" in the Workshop).
@@ -157,8 +184,16 @@ func tick(delta: float, t: float, _water_vel: float, speed_factor: float, alive:
 		arm_l.rotation.z = lerpf(0.35, 2.75, _pull) + wave
 		arm_r.rotation.z = -lerpf(0.35, 2.75, _pull) - wave
 	if captain:
-		captain.rotation.z = -_lean + sin(t * 2.6) * 0.04 * (1.0 - _pull)
-		captain.position.y = 0.08 + absf(sin(t * 7.0)) * 0.02 * speed_factor
+		if riding:
+			# running on top: quick bob and arms out for balance
+			captain.rotation.z = -_lean * 1.6 + sin(t * 3.1) * 0.08
+			captain.position.y = BALL_R * 2.0 - 0.02 + absf(sin(t * 12.0)) * 0.05 * minf(speed_factor, 1.5)
+			if arm_l and _pull < 0.5:
+				arm_l.rotation.z = 1.2 + sin(t * 12.0) * 0.3
+				arm_r.rotation.z = -1.2 + sin(t * 12.0) * 0.3
+		else:
+			captain.rotation.z = -_lean + sin(t * 2.6) * 0.04 * (1.0 - _pull)
+			captain.position.y = 0.08 + absf(sin(t * 7.0)) * 0.02 * speed_factor
 	if flag:
 		flag.rotation.y = sin(t * 9.0) * 0.35
 	if still:

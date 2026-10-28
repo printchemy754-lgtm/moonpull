@@ -73,8 +73,14 @@ func _run(data: Dictionary, interval: float, noise: float, finger: float, sd: in
 		if grounded and t >= next_dec:
 			next_dec = t + interval * rng.randf_range(0.7, 1.3)
 			target = LevelGen.pilot_target(items, z, t, v, x) + rng.randf_range(-noise, noise)
+		var zone := ""
+		for e in items:
+			if e.kind == "portal" and float(e.z) <= z:
+				zone = String(e.zone)
 		if grounded:
-			target -= tr.curvature(z) * v * v * LevelGen.DRIFT * DT
+			target -= tr.curvature(z) * v * v * LevelGen.DRIFT * DT * (2.0 if zone == "FROST PEAK" else 1.0)
+			if zone == "WILD DESERT":
+				target += sin(t * 0.8) * 1.3 * DT
 		x = move_toward(x, target, finger * DT)
 		if tr.rails_at(z) and grounded:
 			var b := tr.bounds(z)

@@ -83,6 +83,7 @@ var _built_d := 0.0
 const CHUNK_LEN := 24.0
 var _platforms: Array = []       # [void dict, Node3D]
 var zone_fx: CPUParticles3D
+var _zones: Array = []           # [[d, zone], ...] portal worlds along the track
 var _zone := ""
 var _base_theme: Dictionary = {}
 var pins_root: Node3D
@@ -160,7 +161,12 @@ func build_level(data: Dictionary, level: int, wall_left := "canyon", wall_right
 			_spawn_pins(float(data.pins))
 	if String(data.get("special", "")) == "rush":
 		_spawn_drone()
-	_wall_len = track.length
+	_zones.clear()
+	for it in items:
+		if it.kind == "portal":
+			_zones.append([float(it.z), String(it.zone)])
+	# the city stops at the first portal: other worlds have their own scenery
+	_wall_len = float(_zones[0][0]) + 4.0 if not _zones.is_empty() else track.length
 	_wall_seed = level
 	set_walls(wall_left, wall_right)
 	_spawn_ambient()
@@ -229,6 +235,45 @@ func _stream(boat_z: float) -> void:
 	if walls:
 		walls.ensure(boat_z + SPAWN_AHEAD + 60.0)
 		walls.cull(boat_z - 60.0)
+
+
+## After a crash: the ball goes back to a checkpoint, so everything from there
+## on (track, obstacles, ramps, power-ups) is built again. Coins you took stay taken.
+func rewind(d: float) -> void:
+	var from := maxf(d - 30.0, 0.0)
+	for c in _chunks:
+		(c[1] as Node3D).queue_free()
+	_chunks.clear()
+	_built_d = floorf(from / CHUNK_LEN) * CHUNK_LEN
+	var first := items.size()
+	for i in items.size():
+		var e: Dictionary = items[i]
+		if float(e.z) + float(e.depth) * 0.5 >= from:
+			first = mini(first, i)
+			if e.has("node") and not e.get("gone", false) and is_instance_valid(e.node):
+				(e.node as Node3D).queue_free()
+			for k in ["node", "gone", "spinner", "mover", "pivot", "pad", "smashed"]:
+				e.erase(k)
+			if String(e.kind) in ["ramp", "speedpad", "boost", "slow", "shield", "magnet", "box"]:
+				e.taken = false
+	_next_item = first
+	var pfirst := pearls.size()
+	for i in pearls.size():
+		var p: Dictionary = pearls[i]
+		if float(p.z) >= from:
+			pfirst = mini(pfirst, i)
+			if p.has("node") and not p.get("gone", false) and is_instance_valid(p.node):
+				(p.node as Node3D).queue_free()
+			p.erase("node")
+			p.erase("gone")
+	_next_pearl = pfirst
+	for g in _garlands:
+		g.queue_free()
+	_garlands.clear()
+	_next_garland = 40.0 + 38.0 * ceilf(maxf(from - 40.0, 0.0) / 38.0)
+	if walls:
+		walls.rewind(d)
+	_stream(d)
 
 
 # ------------------------------------------------------------------ track mesh
@@ -307,6 +352,9 @@ func _build_track_chunk(d0: float, d1: float) -> Node3D:
 					_quad(glow, pb + lo, pa + lo, pa + up, pb + up)
 		d = dn
 	_commit_st(holder, top, _get_track_mat())
+	var zn := _zone_at((d0 + d1) * 0.5)
+	if zn != "":
+		_zone_props(holder, d0, d1, zn)
 	if not _mats.has("track_side_m"):
 		var sm := StandardMaterial3D.new()
 		sm.albedo_color = theme.get("metal", Color("3a3f6a")).darkened(0.35)
@@ -319,6 +367,164 @@ func _build_track_chunk(d0: float, d1: float) -> Node3D:
 	_commit_st(holder, glow, _mats["track_edge"])
 	_commit_st(holder, danger, _mats["track_danger"])
 	return holder
+
+
+func _zone_at(d: float) -> String:
+	var z := ""
+	for pz in _zones:
+		if d >= float(pz[0]):
+			z = String(pz[1])
+	return z
+
+
+## Scenery of a portal world, along both sides of the track.
+func _zone_props(holder: Node3D, d0: float, d1: float, zn: String) -> void:
+	var tmp := Node3D.new()
+	_zone_props_into(tmp, d0, d1, zn)
+	_merge_into(holder, tmp)
+	tmp.free()
+
+
+## Merges every mesh under src into one mesh per material (few draw calls).
+func _merge_into(holder: Node3D, src: Node3D) -> void:
+	var tools := {}
+	var stack: Array = [[src, Transform3D.IDENTITY]]
+	while not stack.is_empty():
+		var top: Array = stack.pop_back()
+		var n: Node3D = top[0]
+		var xf: Transform3D = top[1]
+		for ch in n.get_children():
+			var c3 := ch as Node3D
+			if c3 == null:
+				continue
+			var cx: Transform3D = xf * c3.transform
+			if c3 is MeshInstance3D:
+				var mi := c3 as MeshInstance3D
+				var mat := mi.material_override
+				if not tools.has(mat):
+					var st := SurfaceTool.new()
+					st.begin(Mesh.PRIMITIVE_TRIANGLES)
+					tools[mat] = st
+				(tools[mat] as SurfaceTool).append_from(mi.mesh, 0, cx)
+			stack.append([c3, cx])
+	for mat in tools:
+		var out := MeshInstance3D.new()
+		out.mesh = (tools[mat] as SurfaceTool).commit()
+		out.material_override = mat
+		out.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		holder.add_child(out)
+
+
+func _zone_props_into(holder: Node3D, d0: float, d1: float, zn: String) -> void:
+	var r := RandomNumberGenerator.new()
+	r.seed = int(d0 * 13.0) + zn.length() * 101
+	var d := d0 + r.randf_range(0.0, 4.0)
+	while d < d1:
+		for side in [-1.0, 1.0]:
+			if r.randf() < 0.25:
+				continue
+			var s: float = side * r.randf_range(7.5, 13.0)
+			var f := track.frame(d)
+			var root := Node3D.new()
+			holder.add_child(root)
+			root.transform = Transform3D(f.basis, track.point(d, s, r.randf_range(-4.0, -1.0)))
+			root.rotate_y(r.randf_range(0.0, TAU))
+			var k := r.randf_range(0.8, 1.6)
+			root.scale = Vector3(k, k, k)
+			match zn:
+				"SUNSET BAY": _prop_palm(root, r)
+				"DEEP GALAXY": _prop_planet(root, r)
+				"CANDY LAND": _prop_lolly(root, r)
+				"FROST PEAK": _prop_ice(root, r)
+				"LAVA CORE": _prop_volcano(root, r)
+				"PIXEL WORLD": _prop_pixel_tree(root, r)
+				"WILD DESERT": _prop_cactus(root, r)
+		d += r.randf_range(7.0, 11.0)
+
+
+func _prop_palm(root: Node3D, r: RandomNumberGenerator) -> void:
+	var trunk := _mat("palm_trunk", Color("5a2d4a"), 0.8)
+	var leaf := _mat("palm_leaf", Color("2a1440"), 0.8)
+	var h := r.randf_range(5.0, 8.0)
+	for k in 6:
+		_cone(root, 0.32 - k * 0.03, 0.29 - k * 0.03, h / 6.0 + 0.05, Vector3(k * 0.12, h / 6.0 * (k + 0.5), 0.0), trunk, 8)
+	for k in 6:
+		var a := TAU * k / 6.0
+		var lf := _box(root, Vector3(3.0, 0.08, 0.7), Vector3(cos(a) * 1.4 + 0.7, h + 0.1, sin(a) * 1.4), leaf, Vector3(0.0, -a, -0.45))
+		lf.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+
+func _prop_planet(root: Node3D, r: RandomNumberGenerator) -> void:
+	var cols := [Color("ff8a5a"), Color("6ad0ff"), Color("c98aff"), Color("ffd166"), Color("7dffb0")]
+	var c: Color = cols[r.randi() % cols.size()]
+	root.position += Vector3.UP * r.randf_range(5.0, 10.0)
+	_ball(root, r.randf_range(1.2, 2.6), Vector3.ZERO, _mat("planet_%s" % c.to_html(), c, 0.5, 0.3))
+	if r.randf() < 0.5:
+		_torus(root, 2.6, 3.0, Vector3.ZERO, _mat("planet_ring", Color("fff3d6"), 0.3, 1.5, 0.0), Vector3(0.4, 0.0, 0.3))
+
+
+func _prop_lolly(root: Node3D, r: RandomNumberGenerator) -> void:
+	var stick := _mat("lolly_stick", Color("fff4fa"), 0.4)
+	var h := r.randf_range(4.0, 7.0)
+	_cone(root, 0.12, 0.12, h, Vector3(0.0, h * 0.5, 0.0), stick, 6)
+	var cols := [Color("ff5ea8"), Color("6be4ff"), Color("ffe14f"), Color("9bff6b")]
+	var c: Color = cols[r.randi() % cols.size()]
+	_cone(root, 1.4, 1.4, 0.35, Vector3(0.0, h + 1.2, 0.0), _mat("lolly_%s" % c.to_html(), c, 0.3, 0.4), 20, Vector3(PI * 0.5, 0.0, 0.0))
+	_torus(root, 0.7, 0.9, Vector3(0.0, h + 1.2, 0.0), _mat("lolly_swirl", Color.WHITE, 0.3), Vector3(PI * 0.5, 0.0, 0.0))
+
+
+func _prop_ice(root: Node3D, r: RandomNumberGenerator) -> void:
+	var ice := _mat("ice_spike", Color("bff3ff"), 0.2, 0.6)
+	var snow := _mat("snow_pine", Color("f4fbff"), 0.6)
+	var pine := _mat("pine_dark", Color("1e5a6a"), 0.7)
+	if r.randf() < 0.5:
+		for k in 3:
+			_cone(root, 0.6 - k * 0.1, 0.0, r.randf_range(3.0, 6.0), Vector3(k * 0.6 - 0.6, 2.0, r.randf_range(-0.5, 0.5)), ice, 5)
+	else:
+		for k in 3:
+			_cone(root, 1.6 - k * 0.4, 0.2, 1.8, Vector3(0.0, 1.0 + k * 1.2, 0.0), pine if k < 2 else snow, 8)
+
+
+func _prop_volcano(root: Node3D, r: RandomNumberGenerator) -> void:
+	var rock := _mat("lava_rock", Color("2a1414"), 0.9)
+	var glow := _mat("lava_glow", Color("ff5a10"), 0.2, 3.5, 0.0)
+	var h := r.randf_range(3.0, 6.0)
+	_cone(root, 2.4, 0.7, h, Vector3(0.0, h * 0.5, 0.0), rock, 9)
+	_cone(root, 0.7, 0.5, 0.3, Vector3(0.0, h + 0.05, 0.0), glow, 9)
+	_box(root, Vector3(0.25, h * 0.8, 0.1), Vector3(0.9, h * 0.45, 1.2), glow, Vector3(0.3, 0.6, 0.2))
+
+
+func _prop_pixel_tree(root: Node3D, r: RandomNumberGenerator) -> void:
+	var trunk := _mat("px_trunk", Color("8a5a2b"), 0.9, 0.0, 0.0)
+	var leaves := _mat("px_leaves", Color("3fbf3f"), 0.9, 0.0, 0.0)
+	var dirt := _mat("px_dirt", Color("6b4426"), 0.9, 0.0, 0.0)
+	var grass := _mat("px_grass", Color("5fd35f"), 0.9, 0.0, 0.0)
+	_box(root, Vector3(2.0, 1.0, 2.0), Vector3(0.0, -0.5, 0.0), dirt)
+	_box(root, Vector3(2.02, 0.25, 2.02), Vector3(0.0, -0.1, 0.0), grass)
+	var h := r.randi_range(3, 5)
+	for k in h:
+		_box(root, Vector3(0.5, 1.0, 0.5), Vector3(0.0, 0.5 + k, 0.0), trunk)
+	for x in [-1, 0, 1]:
+		for z in [-1, 0, 1]:
+			_box(root, Vector3(1.0, 1.0, 1.0), Vector3(x, h + 0.5, z), leaves)
+	_box(root, Vector3(1.0, 1.0, 1.0), Vector3(0.0, h + 1.5, 0.0), leaves)
+
+
+func _prop_cactus(root: Node3D, r: RandomNumberGenerator) -> void:
+	if r.randf() < 0.35:
+		var mesa := _mat("mesa", Color("c45a3a"), 0.9)
+		var w := r.randf_range(3.0, 5.0)
+		_box(root, Vector3(w, r.randf_range(3.0, 6.0), w * 0.8), Vector3(0.0, 1.0, 0.0), mesa)
+		return
+	var green := _mat("cactus", Color("3f9f5a"), 0.8)
+	var h := r.randf_range(3.0, 5.0)
+	_cone(root, 0.4, 0.35, h, Vector3(0.0, h * 0.5, 0.0), green, 8)
+	_ball(root, 0.35, Vector3(0.0, h, 0.0), green)
+	for sx in [-1.0, 1.0]:
+		if r.randf() < 0.7:
+			var ah := h * r.randf_range(0.35, 0.6)
+			_cone(root, 0.22, 0.22, 0.8, Vector3(sx * 0.55, ah, 0.0), green, 6, Vector3(0.0, 0.0, PI * 0.5))
+			_cone(root, 0.22, 0.2, 1.2, Vector3(sx * 0.9, ah + 0.6, 0.0), green, 6)
 
 
 func _quad(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, dd: Vector3, ua := Vector2.ZERO, ub := Vector2.ZERO, uc := Vector2.ZERO, ud := Vector2.ZERO) -> void:

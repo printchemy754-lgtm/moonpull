@@ -47,7 +47,7 @@ signal star_drop_done(prize: int)
 
 const INK := Color(0.07, 0.05, 0.16, 0.92)
 const GOLD := Color("ffd166")
-const PANEL := Color(0.08, 0.07, 0.2, 0.88)
+const PANEL := Color(0.11, 0.12, 0.27, 0.95)
 const BLUE := Color("4e7cff")
 const GREEN := Color("2fbf71")
 const ORANGE := Color("f2994a")
@@ -56,6 +56,8 @@ const BOTTOM_SAFE := 220.0  # keep buttons above the banner ad
 
 var font: Font
 var title_font: Font
+var button_font: Font
+const TITLE_FONT := "res://fonts/Milker.otf"
 var top := 40.0
 var root: Control
 
@@ -189,10 +191,13 @@ var win_skip: Button
 
 func _ready() -> void:
 	layer = 10
-	font = load("res://fonts/Montserrat-ExtraBold.ttf")
-	title_font = load("res://fonts/Montserrat-Black.ttf")
+	# Titles: Milker (NOTE: personal-use licence - buy the commercial licence before
+	# release, or change TITLE_FONT). Text: Archivo. Buttons: Montserrat Alternates.
+	font = load("res://fonts/Archivo-Bold.ttf")
+	title_font = load(TITLE_FONT)
+	button_font = load("res://fonts/MontserratAlternates-ExtraBold.ttf")
 	var th := Theme.new()
-	th.default_font = font
+	th.default_font = button_font
 	th.default_font_size = 38
 	root = Control.new()
 	root.theme = th
@@ -278,14 +283,15 @@ func _style(color: Color, radius := 32, border := 8) -> StyleBoxFlat:
 	sb.bg_color = color
 	sb.set_corner_radius_all(radius)
 	if border > 0:
-		# neon rim: a bright edge of the button's own colour plus a soft glow
+		# classic chunky button: darker rim and a thick "lip" at the bottom
 		sb.border_width_left = 3
 		sb.border_width_right = 3
 		sb.border_width_top = 3
-		sb.border_width_bottom = 3 + border / 2
-		sb.border_color = color.lightened(0.45)
-		sb.shadow_color = Color(color.r, color.g, color.b, 0.45)
-		sb.shadow_size = 10
+		sb.border_width_bottom = 3 + border
+		sb.border_color = color.darkened(0.42)
+		sb.shadow_color = Color(0.0, 0.0, 0.0, 0.3)
+		sb.shadow_size = 3
+		sb.shadow_offset = Vector2(0, 4)
 	else:
 		sb.border_color = color.darkened(0.35)
 	sb.content_margin_left = 24
@@ -414,9 +420,10 @@ func _panel_box(width := 600.0) -> VBoxContainer:
 	sb.border_width_left = 3
 	sb.border_width_right = 3
 	sb.border_width_bottom = 3
-	sb.border_color = Color("00e5ff")
-	sb.shadow_color = Color(0.0, 0.9, 1.0, 0.3)
-	sb.shadow_size = 18
+	sb.border_color = Color(1, 1, 1, 0.22)
+	sb.shadow_color = Color(0.0, 0.0, 0.0, 0.45)
+	sb.shadow_size = 12
+	sb.shadow_offset = Vector2(0, 8)
 	panel.add_theme_stylebox_override("panel", sb)
 	panel.custom_minimum_size = Vector2(width, 0)
 	var box := VBoxContainer.new()
@@ -477,7 +484,7 @@ func _build_hud() -> void:
 	pause_btn.pressed.connect(func(): pause_pressed.emit())
 	hud.add_child(pause_btn)
 	level_label = _label("LEVEL 1", 40)
-	_place(level_label, Control.PRESET_CENTER_TOP, -200, top - 4, 200, top + 50)
+	_place(level_label, Control.PRESET_CENTER_TOP, -230, top - 4, 100, top + 50)
 	hud.add_child(level_label)
 	progress = ProgressBar.new()
 	progress.show_percentage = false
@@ -492,7 +499,7 @@ func _build_hud() -> void:
 	fill.content_margin_right = 0
 	progress.add_theme_stylebox_override("background", bg)
 	progress.add_theme_stylebox_override("fill", fill)
-	_place(progress, Control.PRESET_CENTER_TOP, -180, top + 58, 180, top + 82)
+	_place(progress, Control.PRESET_CENTER_TOP, -215, top + 58, 85, top + 82)
 	progress.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(progress)
 	best_label = _label("", 26, GOLD, 6)
@@ -708,7 +715,7 @@ func _build_menu() -> void:
 	csb.border_width_right = 3
 	csb.border_width_top = 3
 	csb.border_width_bottom = 3
-	csb.border_color = Color(0.0, 0.9, 1.0, 0.55)
+	csb.border_color = Color(1, 1, 1, 0.2)
 	card.add_theme_stylebox_override("panel", csb)
 	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	col.add_child(card)
@@ -774,7 +781,7 @@ func _build_menu() -> void:
 	nsb.border_width_left = 3
 	nsb.border_width_right = 3
 	nsb.border_width_bottom = 3
-	nsb.border_color = Color(0.0, 0.9, 1.0, 0.35)
+	nsb.border_color = Color(1, 1, 1, 0.16)
 	nav.add_theme_stylebox_override("panel", nsb)
 	_place(nav, Control.PRESET_BOTTOM_WIDE, 16, -BOTTOM_SAFE - 136, -16, -BOTTOM_SAFE - 6)
 	menu.add_child(nav)
@@ -958,7 +965,7 @@ func show_upgrades(coins: int) -> void:
 		v.add_child(dl)
 		var c := Upgrades.cost(id)
 		var can := c > 0 and coins >= c
-		var b := _button("MAX" if c < 0 else fmt(c), GREEN if can else Color("6b6f86"), "" if c < 0 else "coin", Vector2(170, 84), 26)
+		var b := _button("MAX" if c < 0 else fmt(c), GREEN if can else Color("6b6f86"), "" if c < 0 else "coin", Vector2(200, 84), 24)
 		b.disabled = not can
 		b.pressed.connect(func(): upgrade_buy.emit(id))
 		h.add_child(b)
@@ -1045,7 +1052,7 @@ func show_reveal(reward: Dictionary) -> void:
 	else:
 		var cat: String = reward.cat
 		var it := Custom.item(cat, int(reward.index))
-		var ic := _tile_icon(cat, it)
+		var ic := _tile_icon(cat, it, -1) as IconDraw
 		reveal_icon.color2 = ic.color2
 		reveal_icon.set_kind(ic.kind, ic.color)
 		ic.free()
@@ -1377,7 +1384,15 @@ func _tab_style(t: Button, col: Color) -> void:
 		t.add_theme_stylebox_override(state, st)
 
 
-func _tile_icon(cat: String, it: Dictionary) -> IconDraw:
+func _tile_icon(cat: String, it: Dictionary, index := 0) -> Control:
+	if cat == "hull" and ResourceLoader.exists("res://thumbs/hull_%d.png" % index):
+		# a real picture of the ball (tools/make_thumbs.gd)
+		var tr := TextureRect.new()
+		tr.texture = load("res://thumbs/hull_%d.png" % index)
+		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		return tr
 	var ic := IconDraw.new()
 	match cat:
 		"hull":
@@ -1754,8 +1769,8 @@ func show_shop(cat: String, sel: int, coins: int, slot: String) -> void:
 		v.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		v.alignment = BoxContainer.ALIGNMENT_CENTER
 		tile.add_child(v)
-		var ic := _tile_icon(cat, it)
-		ic.custom_minimum_size = Vector2(76, 76)
+		var ic: Control = _tile_icon(cat, it, i)
+		ic.custom_minimum_size = Vector2(96, 96) if cat == "hull" else Vector2(76, 76)
 		v.add_child(_center(ic))
 		var sub := ""
 		var sub_col := Color(1, 1, 1, 0.7)

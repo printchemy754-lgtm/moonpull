@@ -51,11 +51,11 @@ static func rarity(it: Dictionary) -> String:
 	var p := int(it.price)
 	if p < 0:
 		return "exclusive"
-	if p >= 15000:
+	if p >= 80000:
 		return "legendary"
-	if p >= 5000:
+	if p >= 30000:
 		return "epic"
-	if p >= 1000:
+	if p >= 10000:
 		return "rare"
 	return "common"
 
@@ -108,13 +108,27 @@ static func _palette(prices: Array) -> Array:
 
 
 static func _build() -> void:
+	# pattern > 0 = solid patterned ball (the captain rides on top of it)
 	_items["hull"] = [
 		{"name": "BUBBLE", "price": 0},
-		{"name": "TECH", "price": 2000},
-		{"name": "GYRO", "price": 5000},
-		{"name": "PLANET", "price": 10000},
-		{"name": "DUCKY", "price": 18000},
-		{"name": "MOON", "price": 30000},
+		{"name": "TECH", "price": 15000},
+		{"name": "GYRO", "price": 25000},
+		{"name": "PLANET", "price": 40000},
+		{"name": "DUCKY", "price": 60000},
+		{"name": "MOON", "price": 90000},
+		{"name": "BEACH BALL", "pattern": 1, "price": 8000},
+		{"name": "SOCCER", "pattern": 2, "price": 12000},
+		{"name": "BASKETBALL", "pattern": 3, "price": 12000},
+		{"name": "WATERMELON", "pattern": 4, "price": 18000},
+		{"name": "TENNIS", "pattern": 12, "price": 18000},
+		{"name": "CANDY SWIRL", "pattern": 11, "price": 22000},
+		{"name": "EYEBALL", "pattern": 7, "a": Color("2f8cff"), "price": 30000},
+		{"name": "EARTH", "pattern": 6, "price": 35000},
+		{"name": "BLACK BALL", "pattern": 13, "price": 30000},
+		{"name": "DISCO", "pattern": 5, "price": 70000},
+		{"name": "LAVA ROCK", "pattern": 8, "price": 120000},
+		{"name": "GALAXY ORB", "pattern": 10, "price": 150000},
+		{"name": "GOLDEN", "pattern": 9, "price": -1, "unlock": "rank:25"},
 	]
 	var paints := _palette([0, 300, 300, 500, 800, 800, 1200, 1500, 2000, 2500])
 	paints.append({"name": "GOLDEN", "color": Color("ffcf40"), "price": -1, "unlock": "rank:20"})
@@ -169,3 +183,10 @@ static func _build() -> void:
 		{"name": "GOLDEN CORE", "style": "temple", "price": -1, "unlock": "rank:40"},
 		{"name": "NEON CITY", "style": "neon", "price": -1, "unlock": "rank:50"},
 	]
+	# coins come in fast, so everything except the balls (priced above) costs 8x
+	for cat in CATS:
+		if cat == "hull":
+			continue
+		for it in _items[cat]:
+			if int(it.price) > 0:
+				it.price = int(it.price) * 8

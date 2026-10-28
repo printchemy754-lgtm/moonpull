@@ -316,10 +316,21 @@ static func generate(level: int, seed_override := -1, endless := false) -> Dicti
 	elif UNLOCKS.has(level) and not endless:
 		var fresh: String = UNLOCKS[level]
 		queue = ["run", fresh, "wall", fresh]
-	if level >= 3 and not endless and special == "normal":
-		queue.insert(mini(queue.size(), 2), "portal")   # every level visits another world
+	# portals come in the middle / near the end of a level (2 in PORTAL STORM)
+	var portal_at: Array[int] = []
+	if level >= 3 and not endless and special != "rush":
+		portal_at.append(int(segments * rng.randf_range(0.45, 0.7)))
+		if course == "PORTAL STORM":
+			portal_at[0] = int(segments * 0.35)
+			portal_at.append(int(segments * 0.75))
+	if endless:
+		for k in range(14, segments, 28):
+			portal_at.append(k)
+	var recent: Array[String] = []
+	var zone := ""
 	var since_cp := 0
-	for s in segments:
+	var s := 0
+	while s < segments:
 		if endless:
 			var lv := endless_level(s)
 			if ramp.is_empty() or int(ramp[-1][1]) != lv:
@@ -331,9 +342,21 @@ static func generate(level: int, seed_override := -1, endless := false) -> Dicti
 				g.turn = clampf(0.5 + lv * 0.06, 0.5, 1.2)
 				weights = _patterns_for(lv)
 				_apply_course(weights, COURSE_ORDER[(s / 25) % COURSE_ORDER.size()])
-		var pat: String = queue.pop_front() if not queue.is_empty() else _pick(weights, rng)
+		var pat: String
+		if s in portal_at and queue.is_empty():
+			pat = "portal"
+		elif not queue.is_empty():
+			pat = queue.pop_front()
+		else:
+			pat = _pick(_mixed(weights, recent, zone, float(s) / maxf(segments, 1)), rng)
 		var n0: int = (g.items as Array).size()
 		_pattern(pat, tr, g)
+		if pat == "portal":
+			zone = String(g.items[-1].zone)
+		recent.push_front(pat)
+		if recent.size() > 4:
+			recent.pop_back()
+		s += 1
 		if INTROS.has(pat):
 			for k in range(n0, (g.items as Array).size()):
 				if String(g.items[k].kind) != "checkpoint":
@@ -345,8 +368,13 @@ static func generate(level: int, seed_override := -1, endless := false) -> Dicti
 			_checkpoint(tr, g)
 	var finish := tr.length + 6.0
 	tr.add(40.0, 0.0, 0.0, HALF_W, true)
+	var first_portal := -1.0
+	for it in g.items:
+		if it.kind == "portal":
+			first_portal = float(it.z)
+			break
 	var out := {
-		"items": g.items, "pearls": g.pearls, "finish": finish, "track": tr,
+		"items": g.items, "pearls": g.pearls, "finish": finish, "track": tr, "first_portal": first_portal,
 		"speed": speed_for(level) if not endless else speed_for(2), "rise": 2.6, "fall": 2.2,
 	}
 	out["course"] = course
@@ -357,6 +385,47 @@ static func generate(level: int, seed_override := -1, endless := false) -> Dicti
 	else:
 		out["special"] = special
 	return out
+
+
+const HARD := ["zigzag", "narrow", "split", "lanes3", "twin", "platform", "mines", "slider", "sweeper", "hammer", "tetro", "gate2", "zig", "block"]
+## What each portal world is full of.
+const ZONE_PATTERNS := {
+	"SUNSET BAY": {"jump": 3.0, "speedpad": 3.0, "run": 2.0},
+	"DEEP GALAXY": {"platform": 4.0, "mines": 3.0, "holes": 2.0},
+	"CANDY LAND": {"zigzag": 3.0, "box": 3.0, "chest": 3.0},
+	"FROST PEAK": {"run": 3.0, "narrow": 2.0, "drop": 3.0},
+	"LAVA CORE": {"holes": 3.0, "lanes3": 3.0, "split": 3.0},
+	"PIXEL WORLD": {"tetro": 5.0, "block": 2.0},
+	"WILD DESERT": {"hammer": 4.0, "sweeper": 3.0},
+}
+## Gameplay twist inside a world.
+const ZONE_RULES := {
+	"FROST PEAK": ["SLIPPERY ICE!", "Curves push you twice as hard"],
+	"WILD DESERT": ["WINDY!", "Gusts push you sideways"],
+}
+
+
+## Mixes the obstacles: never the same thing twice in a row, harder things
+## later in the level, and the current portal world's favourites.
+static func _mixed(weights: Dictionary, recent: Array[String], zone: String, u: float) -> Dictionary:
+	var w := weights.duplicate()
+	var zp: Dictionary = ZONE_PATTERNS.get(zone, {})
+	for k in w:
+		var f := 1.0
+		if not recent.is_empty() and recent[0] == k:
+			f = 0.0
+		elif k in recent:
+			f = 0.3
+		if k in HARD:
+			f *= 0.45 + u * 1.1
+		if zp.has(k):
+			f *= float(zp[k])
+		if k == "wall":
+			f *= 0.6
+		if k == "portal":
+			f = 0.0
+		w[k] = float(w[k]) * f
+	return w
 
 
 static func _apply_course(weights: Dictionary, course: String) -> void:

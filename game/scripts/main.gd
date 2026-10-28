@@ -449,8 +449,12 @@ func _steer(delta: float) -> void:
 	if grounded and state == State.PLAYING:
 		var v := speed * _speed_factor()
 		var push := -tr.curvature(boat_z) * v * v * LevelGen.DRIFT * (0.5 if assist else 1.0)
+		if zone == "FROST PEAK":
+			push *= 2.0      # slippery ice
+		elif zone == "WILD DESERT":
+			push += sin(run_t * 0.8) * 1.3   # gusts of wind
 		steer_target = clampf(steer_target + push * delta, -LevelGen.S_MAX, LevelGen.S_MAX)
-	var nx := lerpf(boat_x, steer_target, 1.0 - exp(-13.0 * delta))
+	var nx := lerpf(boat_x, steer_target, 1.0 - exp(-(7.0 if zone == "FROST PEAK" else 13.0) * delta))
 	# glowing rails keep you on the track (HELPER MODE: everywhere)
 	if (tr.rails_at(boat_z) or assist) and grounded:
 		var b := tr.bounds(boat_z)
@@ -492,6 +496,9 @@ func _update_twin_zone() -> void:
 		world.set_zone(z)
 		if entering:
 			ui.popup("%s!" % z, Color("7dfcff"))
+			if LevelGen.ZONE_RULES.has(z):
+				var rule: Array = LevelGen.ZONE_RULES[z]
+				ui.special_banner(rule[0], rule[1], Color("7dfcff"))
 			_mission("portal")
 			Sfx.play("boost", 0.9)
 			Sfx.vibrate(40)
@@ -1082,6 +1089,7 @@ func _next_obstacle() -> Dictionary:
 ## Back to a checkpoint (after a crash or a fall): centre of the track.
 func _respawn_at(d: float) -> void:
 	boat_z = d
+	cam_ready = false   # snap the camera back with the ball
 	var b: Vector2 = world.track.bounds(d)
 	boat_x = (b.x + b.y) * 0.5
 	steer_target = boat_x
@@ -1092,6 +1100,7 @@ func _respawn_at(d: float) -> void:
 	doomed = false
 	fall_t = 0.0
 	air_t = -1.0
+	world.rewind(d)
 	for e in world.items:
 		if float(e.z) + float(e.depth) * 0.5 > d and not e.get("taken", false):
 			e.passed = false
@@ -1633,7 +1642,7 @@ func _start_ai_race() -> void:
 	mode = "race_ai"
 	race_level = clampi(Save.level, 3, 30)
 	_setup_run(LevelGen.generate(race_level, randi()), race_level)
-	var skills := [0.16, 0.11, 0.075] if race_level < 10 else [0.12, 0.08, 0.06]
+	var skills := [0.3, 0.22, 0.15] if race_level < 10 else [0.24, 0.17, 0.12]
 	for i in 3:
 		var r := Rival.new()
 		add_child(r)

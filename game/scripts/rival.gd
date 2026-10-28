@@ -79,7 +79,10 @@ func simulate(delta: float, items: Array, run_t: float, speed: float, rise: floa
 	_decide -= delta
 	if _decide <= 0.0:
 		_decide = skill * randf_range(0.8, 1.3)
-		_target_x = LevelGen.pilot_target(items, z, run_t, speed, x) + randf_range(-0.15, 0.15)
+		_target_x = LevelGen.pilot_target(items, z, run_t, speed, x) + randf_range(-0.25, 0.25)
+		# AI players make mistakes too (the slower ones more often)
+		if randf() < skill * 0.12:
+			_target_x += randf_range(-2.2, 2.2)
 		holding = absf(_target_x - x) > 0.2
 	var nx := move_toward(x, _target_x, 7.0 * delta)
 	vel = (nx - x) / maxf(delta, 0.001)
